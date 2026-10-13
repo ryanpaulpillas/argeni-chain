@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Sets up an Argeni testnet server on Ubuntu 22.04 or 24.04. Run as root from the unpacked bundle:
 #
-#   TREASURY=ag...your-treasury-address bash argeni-bundle/chain/deploy/setup-server.sh
+#   TREASURY=ag...your-treasury-address ANTHROPIC_API_KEY=sk-ant-... bash argeni-bundle/chain/deploy/setup-server.sh
+#
+# ANTHROPIC_API_KEY is optional: with it, the website's AI assistant is installed too. It is stored
+# only in /etc/argeni/assistant.env (readable by root and the service).
 #
 # Safe to run again to update the code: the testnet (genesis, keys, chain data) is created only once.
 set -euo pipefail
@@ -45,6 +48,13 @@ mv /opt/argeni/site.new /opt/argeni/site
 chown -R root:root /opt/argeni/chain /opt/argeni/site
 chmod -R a+rX /opt/argeni/chain /opt/argeni/site
 
+if [ -d "$BUNDLE/assistant" ]; then
+  rm -rf /opt/argeni/assistant.new && cp -R "$BUNDLE/assistant" /opt/argeni/assistant.new
+  (cd /opt/argeni/assistant.new && npm ci --omit=dev --no-audit --no-fund)
+  rm -rf /opt/argeni/assistant && mv /opt/argeni/assistant.new /opt/argeni/assistant
+  chown -R root:root /opt/argeni/assistant && chmod -R a+rX /opt/argeni/assistant
+fi
+
 echo "== 5/6 Testnet (created only once)"
 if [ ! -f /opt/argeni/testnet/genesis.json ]; then
   [ -n "${TREASURY:-}" ] || { echo "Set TREASURY=<your treasury address>. Create it on your own computer, never on the server."; exit 1; }
@@ -66,6 +76,21 @@ for i in $(seq 1 "$COUNT"); do
   systemctl enable "argeni-node@$i" >/dev/null
   systemctl restart "argeni-node@$i"
 done
+if [ -d /opt/argeni/assistant ]; then
+  mkdir -p /etc/argeni && chmod 750 /etc/argeni && chgrp argeni /etc/argeni
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    umask 077; printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY" > /etc/argeni/assistant.env
+    chgrp argeni /etc/argeni/assistant.env; chmod 640 /etc/argeni/assistant.env
+  fi
+  if [ -f /etc/argeni/assistant.env ]; then
+    cp /opt/argeni/chain/deploy/argeni-assistant.service /etc/systemd/system/argeni-assistant.service
+    systemctl daemon-reload
+    systemctl enable argeni-assistant >/dev/null
+    systemctl restart argeni-assistant
+  else
+    echo "AI assistant not started: run again with ANTHROPIC_API_KEY=... to enable it."
+  fi
+fi
 systemctl enable caddy >/dev/null
 systemctl restart caddy
 ufw allow OpenSSH >/dev/null

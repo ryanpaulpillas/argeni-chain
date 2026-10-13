@@ -1,0 +1,26 @@
+# The Argeni website assistant (answers questions with Claude from the site's own pages).
+[Unit]
+Description=Argeni website assistant
+After=network-online.target argeni-node@1.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=argeni
+Group=argeni
+WorkingDirectory=/opt/argeni/assistant
+EnvironmentFile=/etc/argeni/assistant.env
+Environment=SITE_DIR=/opt/argeni/site
+Environment=NODE_URL=http://127.0.0.1:26601
+Environment=ASSISTANT_HOST=127.0.0.1
+Environment=ASSISTANT_PORT=8787
+ExecStart=/usr/bin/node /opt/argeni/assistant/server.mjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -90,12 +90,20 @@ scp argeni-bundle.tar.gz root@203.0.113.25:/root/
 ssh root@203.0.113.25
 ```
 
-**8. Install everything** (replace the address with your treasury address from step 1):
+**8. Install everything** (replace the address with your treasury address from step 1, and the
+key with your Anthropic API key for the website's AI assistant, from
+[console.anthropic.com](https://console.anthropic.com/) → API Keys):
 
 ```bash
 tar xzf argeni-bundle.tar.gz
-TREASURY=ag…your-treasury-address bash argeni-bundle/chain/deploy/setup-server.sh
+TREASURY=ag…your-treasury-address ANTHROPIC_API_KEY=sk-ant-… bash argeni-bundle/chain/deploy/setup-server.sh
 ```
+
+Leave out `ANTHROPIC_API_KEY=…` to install without the AI assistant; you can add it later by
+running the same command again with the key. The key is stored only on the server, in
+`/etc/argeni/assistant.env`. Each visitor question is a paid Claude API call (a few cents at
+most; the site's content is cached), and each visitor is limited to 20 questions per 10 minutes.
+Set a monthly spend limit in the Anthropic Console.
 
 This takes 3–5 minutes. It installs Node.js and Caddy, creates the testnet with post-quantum
 keys, starts 4 validators, turns on HTTPS and the firewall, and prints the network's status at
@@ -131,6 +139,7 @@ The chain, its data and its keys are kept; only the code and website are replace
 systemctl status argeni-node@1        # running?
 journalctl -u argeni-node@1 -f        # live log (Ctrl+C to stop)
 systemctl restart argeni-node@1       # restart one node
+journalctl -u argeni-assistant -f     # the AI assistant's log (one line per question)
 ```
 
 ## Before you announce it
