@@ -1,0 +1,23 @@
+# Caddy gets and renews HTTPS certificates for these names automatically.
+# DNS for each name must point at this server before Caddy starts.
+
+argeni.io, www.argeni.io {
+	root * /opt/argeni/site
+	file_server
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}
+
+# Block explorer and JSON API, served by validator node 1.
+explorer.argeni.io, rpc.argeni.io {
+	encode gzip
+	reverse_proxy 127.0.0.1:26601
+}
+
+faucet.argeni.io {
+	redir https://argeni.io/#start
+}

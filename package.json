@@ -1,0 +1,20 @@
+{
+  "name": "argeni-chain",
+  "version": "0.1.0",
+  "description": "Argeni blockchain node: native coin ARGENI, proof-of-authority devnet/testnet",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "argeni": "src/cli.js"
+  },
+  "scripts": {
+    "devnet:init": "node scripts/init-devnet.js",
+    "devnet": "node scripts/run-devnet.js",
+    "node": "node src/cli.js node",
+    "demo": "node scripts/demo-traffic.js",
+    "test": "node --test test/*.test.js"
+  }
+}
