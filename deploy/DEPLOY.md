@@ -154,9 +154,12 @@ Independent operators join by staking; nobody needs to edit genesis.
    their own computer:
    `node src/cli.js keygen --out validator.json` and `node src/cli.js keygen --out owner.json --encrypt`.
 2. They get at least the minimum stake (100,000 test ARGENI on the testnet) into the owner account.
-3. They start their node with a config like `node-1.json`, without `faucetKey`, with `peers`
-   pointing at `https://rpc.argeni.io`, and with a trusted snapshot block so it doesn't replay the
-   whole chain: `"trustedBlock": { "height": <h>, "hash": "<hash>" }`. Take `h` and `hash` from
+3. They start their node with a config like `node-1.json`, without `faucetKey`, with
+   `"peers": ["https://rpc.argeni.io"]`, their own public HTTPS address as
+   `"publicUrl": "https://node.their-domain.com"` (behind Caddy, like ours), and a trusted snapshot
+   block so it doesn't replay the whole chain: `"trustedBlock": { "height": <h>, "hash": "<hash>" }`.
+   On start the node announces its `publicUrl`, and the network passes consensus messages on to it;
+   nobody has to edit our servers. Take `h` and `hash` from
    `https://rpc.argeni.io/status` (the `snapshots` list), ideally checked against the explorer.
 4. Once their node has caught up, they stake in:
    `node src/cli.js stake join --key owner.json --validator-key validator.json --amount 100000 --rpc https://rpc.argeni.io`

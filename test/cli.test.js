@@ -88,9 +88,11 @@ test('multisig, vesting and staking work from the command line; a new validator 
       snap = snapshots.at(-1);
       return snap && snap.height >= 3;
     });
-    joiner = new Node({ genesis, port: ports[4], peers: urls.slice(0, 4), validatorKey: operator.privateKey, trustedBlock: snap, log: () => {} });
-    for (const n of nodes) n.peers.push(urls[4]);
+    // Like an outside operator who only knows rpc.argeni.io: one peer, plus its own public URL,
+    // which it announces; the rest of the network reaches it through relayed messages.
+    joiner = new Node({ genesis, port: ports[4], peers: [urls[0]], publicUrl: urls[4], validatorKey: operator.privateKey, trustedBlock: snap, log: () => {} });
     await joiner.start();
+    assert.ok(nodes[0].peers.includes(urls[4]), 'the network learned the new node from its announcement');
     assert.equal(joiner.chain.base, snap.height, 'started from the snapshot');
     const target = (await fetchJson(`${urls[0]}/status`)).height + 4;
     await waitFor(async () => (await fetchJson(`${urls[4]}/status`)).height >= target);

@@ -182,6 +182,7 @@ async function main(argv) {
         txsPerMinutePerIp: config.txsPerMinutePerIp,
         snapshotEvery: config.snapshotEvery,
         trustedBlock: config.trustedBlock ?? null,
+        publicUrl: config.publicUrl ?? null,
       });
       await node.start();
       const shutdown = () => node.stop().then(() => process.exit(0));

@@ -15,6 +15,7 @@ const EXPLORER_HTML = new URL('../public/explorer.html', import.meta.url);
 const SYNC_INTERVAL_MS = 3_000;
 const PRUNE_INTERVAL_MS = 60_000;
 const SNAPSHOTS_KEPT = 2;
+const MAX_PEERS = 64;
 
 export class Node {
   // Public-network options (all off by default, so a local devnet behaves as before):
@@ -25,13 +26,18 @@ export class Node {
   // from; trustedBlock = { height, hash } makes an empty node start from that snapshot (taken from
   // a peer, checked against the hash) instead of replaying every block since genesis.
   constructor({ genesis, dataDir = null, port = 0, host = '127.0.0.1', peers = [], validatorKey = null, faucetKey = null, faucetAmount = '100',
-    trustProxy = false, faucetAddressCooldownMs = 60_000, faucetIpCooldownMs = 0, txsPerMinutePerIp = 0, snapshotEvery = 1000, trustedBlock = null, log = console.log }) {
+    trustProxy = false, faucetAddressCooldownMs = 60_000, faucetIpCooldownMs = 0, txsPerMinutePerIp = 0, snapshotEvery = 1000, trustedBlock = null,
+    publicUrl = null, log = console.log }) {
     this.genesis = genesis;
     this.dataDir = dataDir;
     this.chain = new Chain(genesis, { dataDir });
     this.snapshotEvery = snapshotEvery;
     this.trustedBlock = trustedBlock;
     this.snapshots = new Map(); // height -> snapshot (in memory; also written to dataDir/snapshots)
+    // Peer discovery: a node with a publicUrl announces it to its peers on start, so a new validator
+    // joins the gossip without anyone editing other nodes' configs.
+    this.relayed = new Set(); // consensus messages already passed on
+    this.publicUrl = publicUrl ? publicUrl.replace(/\/$/, '') : null;
     this.port = port;
     this.host = host;
     this.peers = peers.map((p) => p.replace(/\/$/, ''));
@@ -59,7 +65,9 @@ export class Node {
     this.#loadSnapshots();
     this.chain.onCommit((block) => this.#maybeSnapshot(block.header.height));
     await this.sync();
+    await this.#announce();
     this.timers.push(setInterval(() => this.sync(), SYNC_INTERVAL_MS));
+    this.timers.push(setInterval(() => this.#announce(), 60_000));
     this.timers.push(setInterval(() => [this.faucetAddressLimit, this.faucetIpLimit, this.txLimit].forEach((l) => l.prune()), PRUNE_INTERVAL_MS));
     if (this.validatorKey) {
       this.consensus = new Consensus({
@@ -81,8 +89,11 @@ export class Node {
     this.consensus?.stop();
     this.timers.forEach(clearInterval);
     this.timers = [];
-    await new Promise((resolve) => this.server.close(resolve));
+    // Close open keep-alive connections right away: peers keep sending messages, so waiting for
+    // them to go idle could take a long time.
+    const closed = new Promise((resolve) => this.server.close(resolve));
     this.server.closeAllConnections?.();
+    await closed;
   }
 
   // Starts an empty node from a peer's snapshot of the trusted block.
@@ -147,6 +158,22 @@ export class Node {
     } catch (err) {
       this.log(`could not submit double-sign evidence: ${err.message}`);
     }
+  }
+
+  #acceptCommit(msg) {
+    const height = msg.block?.header?.height;
+    if (!Number.isSafeInteger(height) || height <= this.chain.height) return { ok: true };
+    if (height > this.chain.height + 1) return { ok: true, ahead: true };
+    const result = this.chain.addBlock(msg.block);
+    return result.ok ? { ok: true } : { ok: false, error: result.error };
+  }
+
+  // Tells peers how to reach this node; they add it to their gossip list.
+  async #announce() {
+    if (!this.publicUrl) return;
+    await Promise.all(this.peers.map((peer) => fetchJson(`${peer}/peers`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: this.publicUrl, genesisHash: this.chain.genesisHash }),
+    }).catch(() => null)));
   }
 
   // Pulls missing blocks from any peer that is ahead of us.
@@ -383,12 +410,38 @@ export class Node {
       return send(res, 200, { ok: true });
     }
     if (parts[0] === 'consensus' && parts.length === 1) {
-      if (!this.consensus) return send(res, 200, { ok: true, ignored: 'not a validator' });
-      const result = this.consensus.handle(body);
+      // Valid messages seen for the first time are passed on to our peers, so validators that are
+      // not directly connected (e.g. an outside validator that only knows rpc.argeni.io) still hear
+      // each other.
+      const id = typeof body?.signature === 'string' ? `${body.type}:${body.signature.slice(0, 128)}` : body?.type === 'commit' ? `commit:${body.block?.hash}` : null;
+      if (id && this.relayed.has(id)) return send(res, 200, { ok: true, known: true });
+      const result = this.consensus ? this.consensus.handle(body) : (body?.type === 'commit' ? this.#acceptCommit(body) : { ok: true });
       if (result.ahead) this.sync();
-      return result.ok ? send(res, 200, { ok: true }) : send(res, 400, { error: result.error });
+      if (!result.ok) return send(res, 400, { error: result.error });
+      if (id) {
+        this.relayed.add(id);
+        if (this.relayed.size > 20_000) this.relayed.delete(this.relayed.values().next().value);
+        this.#broadcast('/consensus', body);
+      }
+      return send(res, 200, { ok: true });
     }
     if (parts[0] === 'faucet' && parts.length === 1) return this.#faucet(body, res, ip);
+    if (parts[0] === 'peers' && parts.length === 1) {
+      let url;
+      try {
+        url = new URL(body?.url);
+      } catch {
+        return send(res, 400, { error: 'url must be an http(s) URL' });
+      }
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) return send(res, 400, { error: 'url must be a plain http(s) URL' });
+      if (body.genesisHash !== chain.genesisHash) return send(res, 400, { error: 'different chain' });
+      const peer = url.origin + url.pathname.replace(/\/$/, '');
+      if (peer === this.publicUrl || peer === this.url || this.peers.includes(peer)) return send(res, 200, { ok: true, known: true });
+      if (this.peers.length >= MAX_PEERS) return send(res, 503, { error: 'peer list full' });
+      this.peers.push(peer);
+      this.log(`new peer ${peer}`);
+      return send(res, 200, { ok: true });
+    }
     return send(res, 404, { error: 'not found' });
   }
 
