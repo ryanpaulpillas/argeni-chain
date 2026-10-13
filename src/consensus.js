@@ -16,16 +16,14 @@ const MAX_FUTURE_MESSAGES = 2_000;
 const VOTE_TYPES = new Set(['prevote', 'precommit']);
 
 export class Consensus {
-  constructor({ chain, privateKey, broadcast, onDecide = () => {}, log = () => {} }) {
+  constructor({ chain, privateKey, broadcast, onDecide = () => {}, onEquivocation = () => {}, log = () => {} }) {
     this.chain = chain;
     this.privateKey = privateKey;
     this.me = publicKeyFromPrivate(privateKey);
-    if (!chain.validators.has(this.me)) throw new Error('consensus key is not in the validator set');
     this.broadcast = broadcast;
     this.onDecide = onDecide;
+    this.onEquivocation = onEquivocation; // (voteA, voteB): a validator signed two different blocks
     this.log = log;
-    this.f = faultTolerance(chain.genesis.validators.length);
-    this.q = chain.quorum;
     this.blockTimeMs = chain.genesis.blockTimeMs;
     this.running = false;
     this.timers = new Set();
@@ -50,7 +48,7 @@ export class Consensus {
   }
 
   status() {
-    return { height: this.height, round: this.round, step: this.step, lockedRound: this.lockedRound };
+    return { height: this.height, round: this.round, step: this.step, lockedRound: this.lockedRound, validator: this.member };
   }
 
   // Entry point for messages from peers. Returns { ok, ahead } or { ok: false, error }.
@@ -96,9 +94,14 @@ export class Consensus {
     this.validity = new Map(); // block hash -> validateBlock result
     this.fired = new Set();
     this.own = [];
+    // The validator set can change from one height to the next (staking, jailing, slashing).
+    this.members = this.chain.validators;
+    this.f = faultTolerance(this.members.size);
+    this.q = this.chain.quorum;
+    this.member = this.members.has(this.me); // a key that isn't (yet) a validator follows along without voting
     const pending = this.future.filter((m) => m.height === this.height);
     this.future = this.future.filter((m) => m.height > this.height);
-    pending.forEach((m) => this.#store(m));
+    pending.filter((m) => !this.#check(m)).forEach((m) => this.#store(m)); // re-checked against this height's set
     const delay = Math.max(0, this.chain.tipTimestamp + this.blockTimeMs - this.chain.now());
     this.#schedule(delay, () => this.#waitForWork());
   }
@@ -218,10 +221,10 @@ export class Consensus {
 
   #decide(block, round, hash) {
     const precommits = [...this.votes.precommit.get(round).values()].filter((v) => v.blockHash === hash);
-    const committed = { header: block.header, txs: block.txs, hash: block.hash, commit: { round, precommits } };
+    const committed = { header: block.header, txs: block.txs, lastCommit: block.lastCommit ?? null, hash: block.hash, commit: { round, precommits } };
     const { state } = this.validity.get(hash);
     if (this.chain.height + 1 !== this.height) return this.#enterHeight();
-    this.log(`committed block ${this.height} (${block.txs.length} txs, round ${round}, ${precommits.length}/${this.chain.genesis.validators.length} signatures) ${hash.slice(0, 12)}`);
+    this.log(`committed block ${this.height} (${block.txs.length} txs, round ${round}, ${precommits.length}/${this.members.size} signatures) ${hash.slice(0, 12)}`);
     this.chain.commitBlock(committed, state); // triggers #enterHeight through the commit listener
     this.lastCommit = { type: 'commit', block: committed };
     this.broadcast(this.lastCommit);
@@ -232,6 +235,7 @@ export class Consensus {
 
   #vote(type, blockHash) {
     this.step = type;
+    if (!this.member) return;
     this.#send({ type, height: this.height, round: this.round, blockHash });
   }
 
@@ -254,7 +258,7 @@ export class Consensus {
     if (!msg || typeof msg !== 'object') return 'message must be an object';
     if (msg.type !== 'proposal' && !VOTE_TYPES.has(msg.type)) return 'unknown message type';
     if (!Number.isSafeInteger(msg.height) || msg.height < 1 || !Number.isSafeInteger(msg.round) || msg.round < 0) return 'bad height or round';
-    if (!this.chain.validators.has(msg.validator)) return 'sender is not a validator';
+    if (msg.height === this.height ? !this.members.has(msg.validator) : !this.chain.validators.has(msg.validator)) return 'sender is not a validator';
     if (msg.type === 'proposal') {
       if (msg.validator !== this.chain.proposerFor(msg.height, msg.round)) return 'sender is not the proposer for this round';
       if (!Number.isSafeInteger(msg.validRound) || msg.validRound < -1 || msg.validRound >= msg.round) return 'bad validRound';
@@ -269,8 +273,10 @@ export class Consensus {
   // Keeps the first message per (type, round, validator); later conflicting ones are ignored.
   #store(msg) {
     if (msg.type === 'proposal') {
-      if (this.proposals.has(msg.round)) return;
-      const block = { header: msg.block.header, txs: msg.block.txs, hash: msg.block.hash };
+      const first = this.proposals.get(msg.round);
+      if (first && first.blockHash !== msg.blockHash) this.onEquivocation(first, msg);
+      if (first) return;
+      const block = { header: msg.block.header, txs: msg.block.txs, lastCommit: msg.block.lastCommit ?? null, hash: msg.block.hash };
       this.proposals.set(msg.round, { ...msg, block });
       this.blocks.set(block.hash, block);
       return;
@@ -278,7 +284,9 @@ export class Consensus {
     const byRound = this.votes[msg.type];
     if (!byRound.has(msg.round)) byRound.set(msg.round, new Map());
     const votes = byRound.get(msg.round);
-    if (!votes.has(msg.validator)) votes.set(msg.validator, msg);
+    const first = votes.get(msg.validator);
+    if (!first) votes.set(msg.validator, msg);
+    else if (first.blockHash !== msg.blockHash && first.blockHash !== null && msg.blockHash !== null) this.onEquivocation(first, msg);
   }
 
   // ---- helpers ----

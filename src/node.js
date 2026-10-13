@@ -1,26 +1,37 @@
 // Network node: HTTP API, consensus participation, gossip to peers and catch-up sync.
 import fs from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
 import { Chain } from './chain.js';
 import { Consensus } from './consensus.js';
-import { addressFromPublicKey, isAddress, keyTypeOf, publicKeyFromPrivate } from './crypto.js';
-import { createTransfer, txHash } from './tx.js';
+import { addressFromPublicKey, isAddress, keyTypeOf, parseMultisig, publicKeyFromPrivate } from './crypto.js';
+import { createTransfer, createTx, txHash } from './tx.js';
 import { formatAmount, parseAmount } from './coin.js';
+import { totalLocked, vestingEnd } from './state.js';
 
 // Post-quantum (ML-DSA-65) signatures are ~3.3 KB each, so blocks and proposals can be a few MB.
 const MAX_BODY_BYTES = 16_000_000;
 const EXPLORER_HTML = new URL('../public/explorer.html', import.meta.url);
 const SYNC_INTERVAL_MS = 3_000;
 const PRUNE_INTERVAL_MS = 60_000;
+const SNAPSHOTS_KEPT = 2;
 
 export class Node {
   // Public-network options (all off by default, so a local devnet behaves as before):
   //   trustProxy: take the client IP from X-Forwarded-For when the request comes from a local reverse proxy
   //   faucetAddressCooldownMs / faucetIpCooldownMs: how often one address / one IP may use the faucet
   //   txsPerMinutePerIp: cap on POST /txs per client IP (0 = unlimited)
+  // Fast sync: snapshotEvery = keep a snapshot of the state every N blocks for new nodes to start
+  // from; trustedBlock = { height, hash } makes an empty node start from that snapshot (taken from
+  // a peer, checked against the hash) instead of replaying every block since genesis.
   constructor({ genesis, dataDir = null, port = 0, host = '127.0.0.1', peers = [], validatorKey = null, faucetKey = null, faucetAmount = '100',
-    trustProxy = false, faucetAddressCooldownMs = 60_000, faucetIpCooldownMs = 0, txsPerMinutePerIp = 0, log = console.log }) {
+    trustProxy = false, faucetAddressCooldownMs = 60_000, faucetIpCooldownMs = 0, txsPerMinutePerIp = 0, snapshotEvery = 1000, trustedBlock = null, log = console.log }) {
+    this.genesis = genesis;
+    this.dataDir = dataDir;
     this.chain = new Chain(genesis, { dataDir });
+    this.snapshotEvery = snapshotEvery;
+    this.trustedBlock = trustedBlock;
+    this.snapshots = new Map(); // height -> snapshot (in memory; also written to dataDir/snapshots)
     this.port = port;
     this.host = host;
     this.peers = peers.map((p) => p.replace(/\/$/, ''));
@@ -44,6 +55,9 @@ export class Node {
     });
     this.port = this.server.address().port;
     this.url = `http://${this.host}:${this.port}`;
+    if (this.trustedBlock && this.chain.height < this.trustedBlock.height) await this.#fastSync();
+    this.#loadSnapshots();
+    this.chain.onCommit((block) => this.#maybeSnapshot(block.header.height));
     await this.sync();
     this.timers.push(setInterval(() => this.sync(), SYNC_INTERVAL_MS));
     this.timers.push(setInterval(() => [this.faucetAddressLimit, this.faucetIpLimit, this.txLimit].forEach((l) => l.prune()), PRUNE_INTERVAL_MS));
@@ -53,6 +67,7 @@ export class Node {
         privateKey: this.validatorKey,
         broadcast: (msg) => this.#broadcast('/consensus', msg),
         onDecide: (block) => this.#broadcast('/blocks', block),
+        onEquivocation: (a, b) => this.#reportDoubleSign(a, b),
         log: this.log,
       });
       this.consensus.start();
@@ -68,6 +83,70 @@ export class Node {
     this.timers = [];
     await new Promise((resolve) => this.server.close(resolve));
     this.server.closeAllConnections?.();
+  }
+
+  // Starts an empty node from a peer's snapshot of the trusted block.
+  async #fastSync() {
+    const { height, hash } = this.trustedBlock;
+    for (const peer of this.peers) {
+      const snap = await fetchJson(`${peer}/snapshot?height=${height}`, { timeoutMs: 120_000 }).catch(() => null);
+      if (!snap) continue;
+      try {
+        Chain.verifySnapshot(this.genesis, snap, { height, hash });
+        this.chain = new Chain(this.genesis, { dataDir: this.dataDir, snapshot: snap });
+        this.log(`started from snapshot at block ${height} (${hash.slice(0, 12)}) from ${peer}`);
+        return;
+      } catch (err) {
+        this.log(`snapshot from ${peer} rejected: ${err.message}`);
+      }
+    }
+    throw new Error(`no peer served a valid snapshot of block ${height}; ask a peer which snapshot heights it has (GET /snapshot)`);
+  }
+
+  #snapshotDir() {
+    return this.dataDir ? path.join(this.dataDir, 'snapshots') : null;
+  }
+
+  #loadSnapshots() {
+    const dir = this.#snapshotDir();
+    if (!dir || !fs.existsSync(dir)) return;
+    for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.json')).sort().slice(-SNAPSHOTS_KEPT)) {
+      try {
+        const snap = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+        this.snapshots.set(snap.height, snap);
+      } catch {
+        // ignore a damaged snapshot; a new one is made later
+      }
+    }
+  }
+
+  #maybeSnapshot(height) {
+    if (!this.snapshotEvery || height % this.snapshotEvery !== 0) return;
+    const snap = this.chain.snapshot();
+    this.snapshots.set(height, snap);
+    const dir = this.#snapshotDir();
+    if (dir) {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${String(height).padStart(10, '0')}.json`), JSON.stringify(snap));
+    }
+    for (const h of [...this.snapshots.keys()].sort((a, b) => a - b).slice(0, -SNAPSHOTS_KEPT)) {
+      this.snapshots.delete(h);
+      if (dir) fs.rmSync(path.join(dir, `${String(h).padStart(10, '0')}.json`), { force: true });
+    }
+  }
+
+  // Submits proof that a validator signed two different blocks; it is slashed and removed.
+  #reportDoubleSign(a, b) {
+    const strip = ({ type, height, round, blockHash, validRound, validator, signature }) => ({ type, height, round, blockHash, ...(type === 'proposal' ? { validRound } : {}), validator, signature });
+    const reporter = publicKeyFromPrivate(this.validatorKey);
+    try {
+      const tx = createTx({ type: 'evidence', chainId: this.genesis.chainId, voteA: strip(a), voteB: strip(b), fee: BigInt(this.genesis.minFee), nonce: this.chain.pendingNonce(addressFromPublicKey(reporter)) }, { privateKey: this.validatorKey });
+      const result = this.chain.addTx(tx);
+      this.log(`validator ${addressFromPublicKey(a.validator)} signed two different blocks at height ${a.height}: ${result.ok ? 'evidence submitted' : `evidence not submitted (${result.error})`}`);
+      if (result.ok && !result.known) this.#broadcast('/txs', tx);
+    } catch (err) {
+      this.log(`could not submit double-sign evidence: ${err.message}`);
+    }
   }
 
   // Pulls missing blocks from any peer that is ahead of us.
@@ -123,7 +202,7 @@ export class Node {
   #latest(query, summarize) {
     const limit = clampLimit(query.get('limit'), 10);
     const out = [];
-    for (let h = this.chain.height; h >= 1 && out.length < limit; h--) out.push(summarize(h));
+    for (let h = this.chain.height; h > this.chain.base && out.length < limit; h--) out.push(summarize(h));
     return out;
   }
 
@@ -161,7 +240,9 @@ export class Node {
         coin: chain.genesis.coin,
         height: chain.height,
         tipHash: chain.tipHash,
-        validators: chain.genesis.validators.map(addressFromPublicKey),
+        validators: chain.validatorList.map(addressFromPublicKey),
+        historyFrom: chain.base + 1,
+        snapshots: [...this.snapshots.values()].map((sn) => ({ height: sn.height, hash: sn.block.hash })),
         self: this.validatorKey ? addressFromPublicKey(publicKeyFromPrivate(this.validatorKey)) : null,
         quorum: chain.quorum,
         supply: `${formatAmount(chain.state.supply, decimals)} ${chain.genesis.coin.symbol}`,
@@ -174,6 +255,33 @@ export class Node {
       });
     }
     if (parts[0] === 'genesis' && parts.length === 1) return send(res, 200, chain.genesis);
+    if (parts[0] === 'snapshot' && parts.length === 1) {
+      if (!query.has('height')) return send(res, 200, { heights: [...this.snapshots.keys()], every: this.snapshotEvery });
+      const snap = this.snapshots.get(Number(query.get('height')));
+      return snap ? send(res, 200, snap) : send(res, 404, { error: `no snapshot at that height; available: ${[...this.snapshots.keys()].join(', ') || 'none yet'}` });
+    }
+    if (parts[0] === 'validators' && parts.length === 1) {
+      const symbol = chain.genesis.coin.symbol;
+      return send(res, 200, {
+        active: chain.validatorList.length,
+        quorum: chain.quorum,
+        minStake: `${formatAmount(chain.params.minStake, decimals)} ${symbol}`,
+        validators: chain.state.validators.map((v) => ({
+          address: addressFromPublicKey(v.key),
+          publicKey: v.key,
+          keyType: keyTypeOf(v.key),
+          owner: v.owner,
+          stake: v.stake.toString(),
+          stakeFormatted: `${formatAmount(v.stake, decimals)} ${symbol}`,
+          status: v.status,
+          genesis: Boolean(v.genesis),
+          missedInARow: v.missed,
+          jailedUntil: v.jailedUntil ?? null,
+          unbondAt: v.unbondAt ?? null,
+        })),
+        banned: [...chain.state.banned].map(addressFromPublicKey),
+      });
+    }
     if (parts[0] === 'blocks' && parts.length === 1) {
       return send(res, 200, this.#latest(query, (h) => this.#blockSummary(chain.getBlock(h))));
     }
@@ -200,13 +308,17 @@ export class Node {
         migratedTo: account.migratedTo ?? null,
         pqCommit: account.pqCommit ?? null,
         txCount: chain.addressIndex.get(parts[1])?.length ?? 0,
-        validator: chain.genesis.validators.some((v) => addressFromPublicKey(v) === parts[1]),
+        validator: chain.validatorList.some((v) => addressFromPublicKey(v) === parts[1]),
+        locked: totalLocked(account, Date.now()).toString(),
+        lockedFormatted: `${formatAmount(totalLocked(account, Date.now()), decimals)} ${chain.genesis.coin.symbol}`,
+        vesting: (account.vesting ?? []).map((g) => ({ ...g, fullyUnlockedAt: vestingEnd(g) })),
+        ownsValidators: chain.state.validators.filter((v) => v.owner === parts[1]).map((v) => addressFromPublicKey(v.key)),
       });
     }
     if (parts[0] === 'txs' && parts.length === 1) {
       const limit = clampLimit(query.get('limit'), 10);
       const out = [];
-      for (let h = chain.height; h >= 1 && out.length < limit; h--) {
+      for (let h = chain.height; h > chain.base && out.length < limit; h--) {
         for (const tx of [...chain.getBlock(h).txs].reverse()) {
           if (out.length < limit) out.push(this.#txSummary(txHash(tx)));
         }
@@ -231,7 +343,7 @@ export class Node {
     const summarize = (s) => s && { validator: s.self, height: s.height, consensus: s.consensus };
     const own = { validator: this.validatorKey ? addressFromPublicKey(publicKeyFromPrivate(this.validatorKey)) : null, height: this.chain.height, consensus: this.consensus?.status() ?? null };
     const peers = await Promise.all(this.peers.map((p) => fetchJson(`${p}/status`).then(summarize).catch(() => null)));
-    const value = { validators: this.chain.genesis.validators.map(addressFromPublicKey), nodes: [own, ...peers.filter(Boolean)] };
+    const value = { validators: this.chain.validatorList.map(addressFromPublicKey), nodes: [own, ...peers.filter(Boolean)] };
     this.networkCache = { at: Date.now(), value };
     return value;
   }
@@ -351,15 +463,33 @@ function formatWait(ms) {
   return `${h} hour${h === 1 ? '' : 's'}`;
 }
 
+const KEY_NAMES = { 'ml-dsa-87': 'ML-DSA-87', 'ml-dsa-65': 'ML-DSA-65', 'slh-dsa-256s': 'SLH-DSA-256s', 'slh-dsa-128s': 'SLH-DSA-128s', ed25519: 'Ed25519', multisig: 'multisig' };
+
 function txFields(tx) {
   const keyType = keyTypeOf(tx.from);
-  if (tx.type === 'migrate') {
-    return { type: 'migrate', keyType, toKeyType: keyTypeOf(tx.to), from: addressFromPublicKey(tx.from), to: addressFromPublicKey(tx.to), amount: '0', fee: tx.fee, nonce: tx.nonce, memo: `Migration to a post-quantum (${keyTypeOf(tx.to) === 'slh-dsa-128s' ? 'SLH-DSA-128s' : 'ML-DSA-65'}) key` };
+  const base = { type: tx.type, keyType, from: addressFromPublicKey(tx.from), to: null, amount: '0', fee: tx.fee, nonce: tx.nonce, memo: '' };
+  const ms = parseMultisig(tx.from);
+  if (ms) base.multisig = `${ms.threshold} of ${ms.keys.length}`;
+  switch (tx.type) {
+    case 'migrate':
+      return { ...base, toKeyType: keyTypeOf(tx.to), to: addressFromPublicKey(tx.to), memo: `Migration to a post-quantum (${KEY_NAMES[keyTypeOf(tx.to)]}) key` };
+    case 'pq-commit':
+      return { ...base, memo: 'Migration commitment to a post-quantum key', commitment: tx.commitment };
+    case 'vest':
+      return { ...base, to: tx.to, amount: tx.amount, memo: tx.memo || `Vesting grant: ${tx.lockMonths}-month lock, then ${tx.vestMonths} monthly unlocks`, lockMonths: tx.lockMonths, vestMonths: tx.vestMonths };
+    case 'validator-join':
+      return { ...base, to: addressFromPublicKey(tx.validator), amount: tx.amount, memo: 'Validator joins with stake' };
+    case 'validator-bond':
+      return { ...base, to: addressFromPublicKey(tx.validator), amount: tx.amount, memo: 'Adds stake to a validator' };
+    case 'validator-leave':
+      return { ...base, to: addressFromPublicKey(tx.validator), memo: 'Validator leaves; stake returns after unbonding' };
+    case 'validator-unjail':
+      return { ...base, to: addressFromPublicKey(tx.validator), memo: 'Validator returns from jail' };
+    case 'evidence':
+      return { ...base, to: addressFromPublicKey(tx.voteA.validator), memo: `Double-signing evidence at block ${tx.voteA.height}: validator slashed` };
+    default:
+      return { ...base, to: tx.to, amount: tx.amount, memo: tx.memo ?? '' };
   }
-  if (tx.type === 'pq-commit') {
-    return { type: 'pq-commit', keyType, from: addressFromPublicKey(tx.from), to: null, amount: '0', fee: tx.fee, nonce: tx.nonce, memo: 'Migration commitment to a post-quantum key', commitment: tx.commitment };
-  }
-  return { type: 'transfer', keyType, from: addressFromPublicKey(tx.from), to: tx.to, amount: tx.amount, fee: tx.fee, nonce: tx.nonce, memo: tx.memo ?? '' };
 }
 
 function clampLimit(value, fallback) {
@@ -396,8 +526,8 @@ function readJson(req) {
   });
 }
 
-export async function fetchJson(url, options = {}) {
-  const res = await fetch(url, { ...options, signal: AbortSignal.timeout(5_000) });
+export async function fetchJson(url, { timeoutMs = 5_000, ...options } = {}) {
+  const res = await fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
   const body = await res.json();
   if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
   return body;

@@ -218,6 +218,11 @@ async function get(path, base = API) {
 // with label "mldsa65:" (ML-DSA-65) or "slhdsa128s:" (SLH-DSA-128s).
 async function addressOf(pubKey) {
   // Same rule as the node: sha256(label || key); post-quantum keys carry a "label:" prefix.
+  // A multisig ("msig:m:key,key,…") is sha256 of the whole string.
+  if (pubKey.startsWith('msig:')) {
+    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pubKey)));
+    return 'ag' + [...hash].map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
   const prefix = pubKey.includes(':') ? pubKey.slice(0, pubKey.indexOf(':') + 1) : '';
   const raw = pubKey.slice(prefix.length).match(/../g).map((h) => parseInt(h, 16));
   const bytes = new Uint8Array([...new TextEncoder().encode(prefix), ...raw]);
@@ -230,6 +235,19 @@ const PQ_LABEL = {
   'ml-dsa-65': 'ML-DSA-65 · post-quantum, category 3 (FIPS 204)',
   'slh-dsa-256s': 'SLH-DSA-256s · hash-based post-quantum, category 5 (FIPS 205)',
   'slh-dsa-128s': 'SLH-DSA-128s · hash-based post-quantum, category 1 (FIPS 205)',
+};
+// What a transaction moved, for tables and lists.
+const TX_KIND = {
+  migrate: 'PQ migration', 'pq-commit': 'PQ commitment', 'validator-leave': 'Validator leaves',
+  'validator-unjail': 'Validator unjailed', evidence: 'Double-sign evidence',
+};
+const valueText = (t, digits = 4) => (t.type === 'migrate' ? 'Entire balance <span class="muted">(migration)</span>'
+  : TX_KIND[t.type] ? `<span class="muted">${TX_KIND[t.type]}</span>`
+  : `${fmt(t.amount, digits)} ${sym()}${t.type === 'vest' ? ' <span class="badge self">vesting</span>' : t.type.startsWith('validator') ? ' <span class="badge ok">stake</span>' : ''}`);
+const TX_TYPE_NAME = {
+  transfer: 'Transfer', migrate: 'Migration to a post-quantum key', 'pq-commit': 'Migration commitment', vest: 'Vesting grant',
+  'validator-join': 'Validator joins (stake)', 'validator-bond': 'Adds validator stake', 'validator-leave': 'Validator leaves',
+  'validator-unjail': 'Validator unjailed', evidence: 'Double-signing evidence (slashing)',
 };
 const addrLink = (a, len = [8, 6]) => {
   if (!a) return '<span class="muted">—</span>';
@@ -246,6 +264,7 @@ async function loadMeta() {
     for (let i = 0; i < genesis.validators.length; i++) names.set(await addressOf(genesis.validators[i]), `Validator ${i + 1}`);
   }
   status = await get('/status');
+  for (const a of status.validators) if (!names.has(a)) names.set(a, `Validator ${names.size + 1}`);
   $('liveDot').className = 'dot on';
   $('netName').textContent = status.chainId;
   $('announce').textContent = `Argeni ${status.chainId.includes('testnet') ? 'testnet' : 'devnet'} is live · test ARGENI has no value`;
@@ -284,7 +303,7 @@ async function viewHome() {
       <div class="icon">Tx</div>
       <div>${txLink(t.hash)}<div class="muted" style="font-size:12.5px">${ago(t.timestamp)}</div></div>
       <div class="c3">From ${addrLink(t.from)}<div>To ${addrLink(t.to)}</div></div>
-      <div class="c4"><span class="amount">${t.type === 'migrate' ? 'PQ migration' : t.type === 'pq-commit' ? 'PQ commitment' : `${fmt(t.amount, 4)} ${sym()}`}</span></div>
+      <div class="c4"><span class="amount">${valueText(t)}</span></div>
     </div>`).join('') || '<div class="empty">No transactions yet</div>';
   return `
     <div class="two">
@@ -305,12 +324,16 @@ async function viewTxs() {
 }
 
 async function viewValidators() {
-  const online = await onlineValidators();
-  const rows = status.validators.map((a) => {
-    const s = online.get(a);
-    return `<tr><td>${esc(names.get(a))}</td><td><a class="mono" href="#/address/${esc(a)}">${esc(a)}</a></td><td>${s ? '<span class="badge ok"><span class="dot on"></span>Online</span>' : '<span class="badge out"><span class="dot off"></span>Offline</span>'}</td><td>${s ? num(s.height) : '–'}</td><td>${s?.consensus ? esc(s.consensus.step) + ' (round ' + s.consensus.round + ')' : '–'}</td></tr>`;
+  const [online, reg] = await Promise.all([onlineValidators(), get('/validators')]);
+  const STATUS = { active: '', jailed: '<span class="badge out">Jailed</span>', unbonding: '<span class="badge self">Leaving</span>' };
+  const rows = reg.validators.map((v) => {
+    const s = online.get(v.address);
+    const net = v.status !== 'active' ? STATUS[v.status] : s ? '<span class="badge ok"><span class="dot on"></span>Online</span>' : '<span class="badge out"><span class="dot off"></span>Offline</span>';
+    return `<tr><td>${esc(names.get(v.address) ?? 'Validator')}</td><td><a class="mono" href="#/address/${esc(v.address)}">${esc(short(v.address, 10, 8))}</a></td><td>${net}</td><td>${v.genesis ? '<span class="muted">genesis</span>' : `${fmt(v.stake, 0)} ${sym()}`}</td><td>${v.missedInARow ? `<span class="badge out">${v.missedInARow} missed</span>` : '<span class="muted">0</span>'}</td><td>${s ? num(s.height) : '–'}</td></tr>`;
   }).join('');
-  return page('Validators', `<div class="card table-wrap"><table><thead><tr><th>Name</th><th>Address</th><th>Status</th><th>Height</th><th>Consensus</th></tr></thead><tbody>${rows}</tbody></table></div>`, `${online.size} of ${status.validators.length} online · ${status.quorum} signatures finalize a block`);
+  const banned = reg.banned.length ? `<p class="muted" style="margin-top:12px">Banned for double-signing: ${reg.banned.map((a) => addrLink(a)).join(', ')}</p>` : '';
+  return page('Validators', `<div class="card table-wrap"><table><thead><tr><th>Name</th><th>Address</th><th>Status</th><th>Stake</th><th>Missed in a row</th><th>Height</th></tr></thead><tbody>${rows}</tbody></table></div>${banned}`,
+    `${reg.active} active · ${online.size} online · ${reg.quorum} signatures finalize a block · minimum stake ${esc(reg.minStake)}`);
 }
 
 async function viewBlock(h) {
@@ -319,13 +342,7 @@ async function viewBlock(h) {
   const signers = await Promise.all(b.commit.precommits.map((p) => addressOf(p.validator)));
   const fees = b.txs.reduce((s, t) => s + BigInt(t.fee), 0n);
   const nav = `${height > 1 ? `<a class="navbtn" href="#/block/${height - 1}" title="Previous block">‹</a>` : ''}${height < status.height ? `<a class="navbtn" href="#/block/${height + 1}" title="Next block">›</a>` : ''}`;
-  const txRows = [];
-  for (let i = 0; i < b.txs.length; i++) {
-    const t = b.txs[i];
-    const migrate = t.type === 'migrate';
-    const commit = t.type === 'pq-commit';
-    txRows.push({ type: t.type, hash: b.txHashes[i], from: await addressOf(t.from), to: migrate ? await addressOf(t.to) : commit ? null : t.to, amount: t.amount ?? '0', fee: t.fee, height, timestamp: b.header.timestamp, memo: migrate ? 'Migration to a post-quantum key' : commit ? 'Migration commitment to a post-quantum key' : (t.memo || '') });
-  }
+  const txRows = await Promise.all(b.txHashes.map((h) => get(`/txs/${h}`)));
   const onTop = status.height - height;
   return page(`Block <span class="mono">#${height}</span>`, `
     <div class="card rows">
@@ -358,10 +375,11 @@ async function viewTx(hash) {
       ${pending ? '' : row('Timestamp', when(t.timestamp))}
       ${row('From', full(t.from))}
       ${row('To', full(t.to))}
-      ${row('Type', t.type === 'migrate' ? '<span class="badge ok">Migration to a post-quantum key</span>' : t.type === 'pq-commit' ? '<span class="badge ok">Migration commitment</span>' : 'Transfer')}
-      ${row('Signature', t.type === 'migrate' ? `<span class="badge self">Ed25519 (old key)</span> + <span class="badge ok">${PQ_LABEL[t.toKeyType] ?? 'post-quantum'} (new key)</span>` : PQ_LABEL[t.keyType] ? `<span class="badge ok">${PQ_LABEL[t.keyType]}</span>` : '<span class="badge self">Ed25519 · classical</span>')}
+      ${row('Type', t.type === 'transfer' ? 'Transfer' : `<span class="badge ok">${esc(TX_TYPE_NAME[t.type] ?? t.type)}</span>`)}
+      ${t.type === 'vest' ? row('Unlocks', `nothing for ${t.lockMonths} month${t.lockMonths === 1 ? '' : 's'}, then equal parts each month for ${t.vestMonths} month${t.vestMonths === 1 ? '' : 's'}`) : ''}
+      ${row('Signature', t.multisig ? `<span class="badge ok">Multisig · ${esc(t.multisig)} post-quantum keys</span>` : t.type === 'migrate' ? `<span class="badge self">Ed25519 (old key)</span> + <span class="badge ok">${PQ_LABEL[t.toKeyType] ?? 'post-quantum'} (new key)</span>` : PQ_LABEL[t.keyType] ? `<span class="badge ok">${PQ_LABEL[t.keyType]}</span>` : '<span class="badge self">Ed25519 · classical</span>')}
       ${t.type === 'pq-commit' ? row('Commitment', `<span class="mono">${esc(t.commitment)}</span> <span class="muted">(hash of the future post-quantum address; this account can only migrate there)</span>`) : ''}
-      ${row('Value', t.type === 'migrate' ? '<b>Entire balance</b> <span class="muted">moved to the new address; the old key is locked</span>' : t.type === 'pq-commit' ? '<span class="muted">none (no funds move)</span>' : `<b>${fmt(t.amount, 18)} ${sym()}</b>`)}
+      ${row('Value', t.type === 'migrate' ? '<b>Entire balance</b> <span class="muted">moved to the new address; the old key is locked</span>' : TX_KIND[t.type] ? '<span class="muted">none (no funds move)</span>' : `<b>${fmt(t.amount, 18)} ${sym()}</b>`)}
       ${row('Transaction Fee', `${fmt(t.fee, 18)} ${sym()} <span class="muted">(paid to the block proposer)</span>`)}
       ${row('Nonce', num(t.nonce))}
       ${row('Memo', t.memo ? esc(t.memo) : '<span class="muted">none</span>')}
@@ -373,12 +391,14 @@ async function viewAddress(a) {
   const label = names.get(a);
   const rows = hist.txs.map((t) => {
     const dir = t.from === a && t.to === a ? '<span class="badge self">SELF</span>' : t.from === a ? '<span class="badge out">OUT</span>' : '<span class="badge in">IN</span>';
-    return `<tr><td>${txLink(t.hash)}</td><td>${blockLink(t.height)}</td><td class="muted">${ago(t.timestamp)}</td><td>${addrLink(t.from)}</td><td>${dir}</td><td>${addrLink(t.to)}</td><td>${t.type === 'migrate' ? 'Entire balance <span class="muted">(migration)</span>' : t.type === 'pq-commit' ? '<span class="muted">PQ commitment</span>' : `${fmt(t.amount, 4)} ${sym()}`}</td><td class="muted">${fmt(t.fee)}</td></tr>`;
+    return `<tr><td>${txLink(t.hash)}</td><td>${blockLink(t.height)}</td><td class="muted">${ago(t.timestamp)}</td><td>${addrLink(t.from)}</td><td>${dir}</td><td>${addrLink(t.to)}</td><td>${valueText(t)}</td><td class="muted">${fmt(t.fee)}</td></tr>`;
   }).join('');
   return page(`${label ? esc(label) : 'Address'} <span class="mono">${esc(a)}</span>${copyBtn(a)}`, `
     <div class="two" style="margin:0 0 16px">
       <div class="card rows">
         ${row('Balance', `<b>${fmt(acct.balance, 18)} ${sym()}</b>`)}
+        ${acct.locked !== '0' ? row('Locked (vesting)', `${fmt(acct.locked, 4)} ${sym()}<div class="muted" style="font-size:13px">${acct.vesting.map((g) => `${fmt(g.amount, 0)}: ${g.lockMonths}-month lock, then ${g.vestMonths} monthly unlocks · fully free ${new Date(g.fullyUnlockedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`).join('<br>')}</div>`) : ''}
+        ${acct.ownsValidators.length ? row('Runs validators', acct.ownsValidators.map((v) => addrLink(v)).join(' ')) : ''}
         ${row('Transactions', `${num(acct.txCount)} (${num(acct.nonce)} sent)`)}
         ${row('Type', acct.validator ? '<span class="badge ok">Validator</span>' : 'Account')}
         ${acct.pqCommit && !acct.migratedTo ? row('Migration', '<span class="badge ok">Committed</span> to a post-quantum key; it can only migrate to that key') : ''}
@@ -402,7 +422,7 @@ function sigSquares(signers) {
   return `<span class="sigs">${status.validators.map((v) => `<span class="sig ${set.has(v) ? 'y' : ''}" title="${esc(names.get(v))}"></span>`).join('')}</span><span class="muted">${set.size}/${status.validators.length}</span>`;
 }
 function txTable(txs) {
-  const rows = txs.map((t) => `<tr><td>${txLink(t.hash)}</td><td>${blockLink(t.height)}</td><td class="muted">${ago(t.timestamp)}</td><td>${addrLink(t.from)}</td><td class="muted">→</td><td>${addrLink(t.to)}</td><td>${t.type === 'migrate' ? 'Entire balance <span class="muted">(migration)</span>' : t.type === 'pq-commit' ? '<span class="muted">PQ commitment</span>' : `${fmt(t.amount, 4)} ${sym()}`}</td><td class="muted">${fmt(t.fee)}</td><td class="muted">${esc(t.memo)}</td></tr>`).join('');
+  const rows = txs.map((t) => `<tr><td>${txLink(t.hash)}</td><td>${blockLink(t.height)}</td><td class="muted">${ago(t.timestamp)}</td><td>${addrLink(t.from)}</td><td class="muted">→</td><td>${addrLink(t.to)}</td><td>${valueText(t)}</td><td class="muted">${fmt(t.fee)}</td><td class="muted">${esc(t.memo)}</td></tr>`).join('');
   return `<div class="card table-wrap"><table><thead><tr><th>Txn Hash</th><th>Block</th><th>Age</th><th>From</th><th></th><th>To</th><th>Value</th><th>Fee</th><th>Memo</th></tr></thead><tbody>${rows || '<tr><td colspan="9" class="empty">No transactions yet</td></tr>'}</tbody></table></div>`;
 }
 

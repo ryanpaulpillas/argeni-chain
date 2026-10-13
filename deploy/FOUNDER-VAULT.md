@@ -82,7 +82,37 @@ do one small test transfer from it on the testnet.
 - **Key may be compromised and you made a commitment:** if you ran `pq-commit` to a backup vault in
   advance, only that backup can receive the funds, even from an attacker holding the old key.
 
-## Still to come
+## Option: a 2-of-3 multisig vault
 
-Multi-signature vaults (for example, 2 of 3 founders must sign) aren't supported by the chain yet.
-Until they are, each founder's vault is controlled by one key, which is why the backups matter.
+For the treasury, or a vault shared by several people, use a **multisig**: any 2 of 3 keys must sign
+before funds move. One lost or stolen key is then not enough to lose or steal anything.
+
+1. Each member creates their own encrypted key on their own computer (steps above), for example
+   `member-ryan.json`, and shares **only the public part**. The `publicKey` and `address` lines of
+   the file are public. Sharing the whole file is safe only if it is encrypted, because the
+   encrypted file never contains the private key in readable form.
+2. One person builds the vault from the members' files:
+
+   ```bash
+   node src/cli.js multisig create --threshold 2 --keys member-ryan.json,member-b.json,member-c.json --out treasury-vault.json
+   ```
+
+   It prints the vault's address. Put that address in genesis (or send funds to it).
+3. To spend, one person prepares the transaction, then two members sign it, each on their own
+   computer (the file can travel by USB or email; it holds no secrets), and anyone submits it:
+
+   ```bash
+   node src/cli.js multisig propose --vault treasury-vault.json --to ag… --amount 1000 --out spend.json
+   node src/cli.js multisig sign --tx spend.json --key ~/argeni-vault/member-ryan.json
+   node src/cli.js multisig sign --tx spend.json --key member-b.json     # on member B's computer
+   node src/cli.js multisig submit --tx spend.json
+   ```
+
+`sign` shows what is being signed (amount, recipient) before signing. Check it every time.
+
+## Lock-ups are enforced by the chain
+
+Founder, team and partner allocations go into genesis as **vesting grants** (for founders:
+12-month lock, then 24 monthly unlocks). Until a part unlocks, the chain refuses to move it, from
+any key, including after a key migration. The explorer shows each address's locked amount and
+when it becomes free.

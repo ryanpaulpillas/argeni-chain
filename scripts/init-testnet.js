@@ -52,6 +52,17 @@ const genesis = {
   blockReward: '0',
   maxSupply: parseAmount('1000000000', DECIMALS).toString(),
   validators: validators.map((v) => v.publicKey),
+  // Staking: new validators join by bonding at least minStake; penalties for double-signing and downtime.
+  staking: {
+    minStake: parseAmount('100000', DECIMALS).toString(),
+    maxValidators: 100,
+    minValidators: count,
+    unbondingMs: 14 * 24 * 60 * 60 * 1000,
+    jailMs: 24 * 60 * 60 * 1000,
+    downtimeBlocks: 500,
+    downtimeSlashBps: 10, // 0.1%
+    doubleSignSlashBps: 500, // 5%
+  },
   alloc: {
     [values.treasury]: parseAmount('999000000', DECIMALS).toString(),
     [faucet.address]: parseAmount('1000000', DECIMALS).toString(),

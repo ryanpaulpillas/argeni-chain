@@ -59,6 +59,7 @@ function pqSpec(key) {
 
 export function keyTypeOf(key) {
   if (typeof key !== 'string') return null;
+  if (key.startsWith(MULTISIG_PREFIX)) return 'multisig';
   const pq = pqSpec(key);
   if (pq) return pq[0];
   return isHex(key, 32) ? 'ed25519' : null;
@@ -67,6 +68,7 @@ export function keyTypeOf(key) {
 export function isPublicKey(value) {
   const type = keyTypeOf(value);
   if (type === 'ed25519') return true;
+  if (type === 'multisig') return parseMultisig(value) !== null;
   if (!PQ[type]) return false;
   const hex = value.slice(PQ[type].prefix.length);
   return hex.length > 0 && hex.length <= 6000 && /^[0-9a-f]+$/.test(hex) && hex.length % 2 === 0;
@@ -111,6 +113,7 @@ export function sign(message, privateKey) {
 
 export function verify(message, signatureHex, publicKey) {
   const type = keyTypeOf(publicKey);
+  if (type === 'multisig') return verifyMultisig(message, signatureHex, publicKey);
   try {
     if (type === 'ed25519') {
       if (!isHex(signatureHex, 64)) return false;
@@ -136,6 +139,7 @@ export function verify(message, signatureHex, publicKey) {
 // so addresses of different key types never collide.
 export const ADDRESS_HEX_LENGTH = 64;
 export function addressFromPublicKey(publicKey) {
+  if (keyTypeOf(publicKey) === 'multisig') return ADDRESS_PREFIX + sha256(Buffer.from(publicKey, 'utf8'));
   const pq = pqSpec(publicKey);
   const bytes = pq
     ? Buffer.concat([Buffer.from(pq[1].prefix), Buffer.from(publicKey.slice(pq[1].prefix.length), 'hex')])
@@ -163,4 +167,73 @@ export function merkleRoot(leaves) {
     level = next;
   }
   return level[0];
+}
+
+// ---- Multi-signature accounts ----
+// A multisig "public key" is "msig:<m>:<key1>,<key2>,…": any m of the listed post-quantum keys must
+// sign. Its address is "ag" + sha256 of that whole string, so it never collides with a single key's
+// address. A multisig signature is "<i>:<hex>,<j>:<hex>,…", where i is the signer's position in the
+// list. Used for treasuries and founder vaults ("2 of 3 must sign"), so one lost or stolen key is
+// not enough to move funds.
+export const MULTISIG_PREFIX = 'msig:';
+export const MAX_MULTISIG_KEYS = 10;
+
+// Returns { threshold, keys } or null if the string is not a well-formed multisig key.
+export function parseMultisig(value) {
+  if (typeof value !== 'string' || !value.startsWith(MULTISIG_PREFIX) || value.length > 80_000) return null;
+  const match = /^msig:([1-9]\d?):(.+)$/.exec(value);
+  if (!match) return null;
+  const threshold = Number(match[1]);
+  const keys = match[2].split(',');
+  if (keys.length < 2 || keys.length > MAX_MULTISIG_KEYS || threshold > keys.length) return null;
+  if (!keys.every((k) => PQ_KEY_TYPES.includes(keyTypeOf(k)) && isPublicKey(k))) return null;
+  for (let i = 1; i < keys.length; i++) if (!(keys[i - 1] < keys[i])) return null; // sorted, no duplicates
+  return { threshold, keys };
+}
+
+// Builds the canonical multisig key: keys sorted and de-duplicated.
+export function multisigKey(threshold, publicKeys) {
+  const keys = [...new Set(publicKeys)].sort();
+  const key = `${MULTISIG_PREFIX}${threshold}:${keys.join(',')}`;
+  if (!parseMultisig(key)) throw new Error(`a multisig needs 2-${MAX_MULTISIG_KEYS} different post-quantum keys and a threshold from 1 to their number`);
+  return key;
+}
+
+// The key types inside a key: one for a single key, the member types for a multisig.
+export function memberKeyTypes(publicKey) {
+  const ms = parseMultisig(publicKey);
+  return ms ? [...new Set(ms.keys.map(keyTypeOf))] : [keyTypeOf(publicKey)];
+}
+
+// One member's signature part, "<index>:<hex>". Members sign the same bytes independently, offline.
+export function signMultisigPart(message, msig, privateKey) {
+  const ms = parseMultisig(msig);
+  if (!ms) throw new Error('not a multisig key');
+  const index = ms.keys.indexOf(publicKeyFromPrivate(privateKey));
+  if (index < 0) throw new Error('this key is not a member of the multisig');
+  return `${index}:${sign(message, privateKey)}`;
+}
+
+// Joins signature parts into one multisig signature (sorted by index, duplicates dropped).
+export function combineMultisig(parts) {
+  const byIndex = new Map();
+  for (const part of parts.flatMap((p) => p.split(',')).filter(Boolean)) byIndex.set(Number(part.split(':')[0]), part);
+  return [...byIndex.keys()].sort((a, b) => a - b).map((i) => byIndex.get(i)).join(',');
+}
+
+function verifyMultisig(message, signature, publicKey) {
+  const ms = parseMultisig(publicKey);
+  if (!ms || typeof signature !== 'string' || signature.length > 400_000) return false;
+  const parts = signature.split(',');
+  if (parts.length < ms.threshold || parts.length > ms.keys.length) return false;
+  const seen = new Set();
+  for (const part of parts) {
+    const match = /^(\d{1,2}):([0-9a-f]+)$/.exec(part);
+    if (!match) return false;
+    const index = Number(match[1]);
+    if (index >= ms.keys.length || seen.has(index)) return false;
+    if (!verify(message, match[2], ms.keys[index])) return false;
+    seen.add(index);
+  }
+  return seen.size >= ms.threshold;
 }

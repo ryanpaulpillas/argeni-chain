@@ -97,13 +97,14 @@ test('genesis rejects unknown key types in the retirement schedule', () => {
 });
 
 test('blocks respect a byte limit, so large hash-based transactions spread across blocks', () => {
-  const ctx = setup({ maxBlockBytes: 150_000 });
+  // Each block also carries the previous block's signatures (~45 KB for 3 ML-DSA-87 validators).
+  const ctx = setup({ maxBlockBytes: 200_000 });
   const vaults = Array.from({ length: 3 }, () => generateKeyPair('slh-dsa-256s'));
   for (const v of vaults) ctx.chain.addTx(transfer(ctx, ctx.strong, addressFromPublicKey(v.publicKey), 5n * ONE, vaults.indexOf(v)));
   finalize(ctx);
   for (const v of vaults) ctx.chain.addTx(transfer(ctx, v, ctx.strongAddr, ONE, 0)); // ~60 KB each
   const first = finalize(ctx);
-  assert.equal(first.txs.length, 2, 'only two ~60 KB transactions fit in 150 KB');
+  assert.equal(first.txs.length, 2, 'only two ~60 KB transactions fit in 200 KB next to the signatures');
   assert.equal(finalize(ctx).txs.length, 1, 'the third goes in the next block');
 
   // A proposer that ignores the limit gets its block rejected by everyone else.
@@ -114,7 +115,7 @@ test('blocks respect a byte limit, so large hash-based transactions spread acros
   ctx.clock.t += ctx.genesis.blockTimeMs;
   ctx.chain.genesis.maxBlockBytes = 10_000_000; // a cheating proposer's view
   const oversized = ctx.chain.buildBlock(ctx.keys[0].publicKey);
-  ctx.chain.genesis.maxBlockBytes = 150_000;
+  ctx.chain.genesis.maxBlockBytes = 200_000;
   assert.equal(oversized.txs.length, 3);
   assert.match(ctx.chain.validateBlock(oversized).error, /block too large/);
 });

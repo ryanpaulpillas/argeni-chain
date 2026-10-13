@@ -146,6 +146,26 @@ systemctl restart argeni-node@1       # restart one node
 journalctl -u argeni-assistant -f     # the AI assistant's log (one line per question)
 ```
 
+## Adding a validator on another server
+
+Independent operators join by staking; nobody needs to edit genesis.
+
+1. The operator creates a validator key on their server and an owner key (holding the stake) on
+   their own computer:
+   `node src/cli.js keygen --out validator.json` and `node src/cli.js keygen --out owner.json --encrypt`.
+2. They get at least the minimum stake (100,000 test ARGENI on the testnet) into the owner account.
+3. They start their node with a config like `node-1.json`, without `faucetKey`, with `peers`
+   pointing at `https://rpc.argeni.io`, and with a trusted snapshot block so it doesn't replay the
+   whole chain: `"trustedBlock": { "height": <h>, "hash": "<hash>" }`. Take `h` and `hash` from
+   `https://rpc.argeni.io/status` (the `snapshots` list), ideally checked against the explorer.
+4. Once their node has caught up, they stake in:
+   `node src/cli.js stake join --key owner.json --validator-key validator.json --amount 100000 --rpc https://rpc.argeni.io`
+
+From the next block on, the new validator must sign. Missing 500 blocks in a row costs 0.1% of
+the stake and a day out of the set; signing two different blocks costs 5% and a permanent ban.
+To leave: `node src/cli.js stake leave --key owner.json --validator ag…`. The stake returns after
+14 days.
+
 ## Before you announce it
 
 - File the **ARGENI trademark** at IPOPHL (the name becomes public the day this goes live).
