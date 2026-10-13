@@ -4,19 +4,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { generateKeyPair, addressFromPublicKey, keyTypeOf, KEY_TYPES, PQ_KEY_TYPES, DEFAULT_KEY_TYPE } from './crypto.js';
+import { generateKeyPair, addressFromPublicKey, publicKeyFromPrivate, keyTypeOf, KEY_TYPES, PQ_KEY_TYPES, DEFAULT_KEY_TYPE } from './crypto.js';
 import { createTransfer, createMigration, createMigrationCommit } from './tx.js';
 import { formatAmount, parseAmount } from './coin.js';
+import { writeKeyFile, readKeyFile, loadSigningKey, choosePassphrase, encryptKeyFile, decryptKeyFile, isEncrypted, askPassphrase } from './keyfile.js';
 import { Node, fetchJson } from './node.js';
 
 const DEFAULT_RPC = 'http://127.0.0.1:26601';
 
 const USAGE = `argeni <command> [options]
 
-  keygen --out <file> [--type ml-dsa-87|ml-dsa-65|slh-dsa-256s|slh-dsa-128s|ed25519]
+  keygen --out <file> [--type ml-dsa-87|ml-dsa-65|slh-dsa-256s|slh-dsa-128s|ed25519] [--encrypt]
                                               create a new key file (default: post-quantum ML-DSA-87,
                                               NIST category 5; slh-dsa-256s is hash-based, category 5,
-                                              for savings, cold storage and treasuries)
+                                              for savings, cold storage and treasuries). --encrypt
+                                              protects it with a passphrase (use it for vaults)
+  encrypt --key <file> --out <file>           write a passphrase-protected copy of a key file
+  check-key --key <file>                      confirm a (backup) key file opens and matches its address
   address --key <file>                        print the address of a key file
   node --config <file>                        run a node
   status [--rpc <url>]                        show chain status
@@ -32,17 +36,14 @@ const USAGE = `argeni <command> [options]
 
 Default --rpc is ${DEFAULT_RPC}.`;
 
-export function writeKeyFile(file, keys) {
-  if (fs.existsSync(file)) throw new Error(`${file} already exists; refusing to overwrite a key`);
-  fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
-  const content = { address: addressFromPublicKey(keys.publicKey), ...keys };
-  if (!content.type) content.type = 'ed25519';
-  fs.writeFileSync(file, `${JSON.stringify(content, null, 2)}\n`, { mode: 0o600 });
-  return content;
-}
+// Key-file helpers live in keyfile.js; re-exported for scripts that import them from here.
+export { writeKeyFile, readKeyFile };
 
-export function readKeyFile(file) {
-  return JSON.parse(fs.readFileSync(file, 'utf8'));
+// Node keys are read unattended, so they must be plain files (protected by file permissions).
+function plainKey(file) {
+  const keys = readKeyFile(file);
+  if (isEncrypted(keys)) throw new Error(`${file} is encrypted; a running node needs an unencrypted key file`);
+  return keys.privateKey;
 }
 
 async function main(argv) {
@@ -61,6 +62,7 @@ async function main(argv) {
       amount: { type: 'string' },
       fee: { type: 'string' },
       memo: { type: 'string' },
+      encrypt: { type: 'boolean', default: false },
     },
   });
   const rpc = values.rpc.replace(/\/$/, '');
@@ -69,8 +71,32 @@ async function main(argv) {
     case 'keygen': {
       if (!values.out) throw new Error('--out is required');
       if (!KEY_TYPES.includes(values.type)) throw new Error(`--type must be one of: ${KEY_TYPES.join(', ')}`);
-      const { address } = writeKeyFile(values.out, generateKeyPair(values.type));
-      console.log(`wrote ${values.out} (${values.type}${PQ_KEY_TYPES.includes(values.type) ? ', post-quantum' : ''})\naddress ${address}\nKeep this file private: anyone with it controls the funds.`);
+      if (fs.existsSync(values.out)) throw new Error(`${values.out} already exists; refusing to overwrite a key`);
+      const passphrase = values.encrypt ? await choosePassphrase() : null;
+      const keys = generateKeyPair(values.type);
+      const plain = { address: addressFromPublicKey(keys.publicKey), ...keys };
+      writeKeyFile(values.out, passphrase ? encryptKeyFile(plain, passphrase) : plain);
+      console.log(`wrote ${values.out} (${values.type}${PQ_KEY_TYPES.includes(values.type) ? ', post-quantum' : ''}${passphrase ? ', encrypted' : ''})\naddress ${plain.address}`);
+      console.log(passphrase
+        ? 'Without the passphrase this file cannot be opened, and nobody can recover it. Store backups and the passphrase separately.'
+        : 'Keep this file private: anyone with it controls the funds.');
+      return;
+    }
+    case 'encrypt': {
+      if (!values.key || !values.out) throw new Error('--key and --out are required');
+      const file = readKeyFile(values.key);
+      if (isEncrypted(file)) throw new Error(`${values.key} is already encrypted`);
+      if (fs.existsSync(values.out)) throw new Error(`${values.out} already exists; refusing to overwrite a key`);
+      writeKeyFile(values.out, encryptKeyFile(file, await choosePassphrase()));
+      console.log(`wrote encrypted ${values.out} for ${file.address}\nCheck it with: argeni check-key --key ${values.out}\nThen delete the unencrypted ${values.key} securely.`);
+      return;
+    }
+    case 'check-key': {
+      if (!values.key) throw new Error('--key is required');
+      const file = readKeyFile(values.key);
+      const keys = isEncrypted(file) ? decryptKeyFile(file, await askPassphrase(`Passphrase for ${path.basename(values.key)}: `)) : file;
+      if (publicKeyFromPrivate(keys.privateKey) !== keys.publicKey || addressFromPublicKey(keys.publicKey) !== keys.address) throw new Error('key file does not match its address');
+      console.log(`OK: ${values.key} opens and controls ${keys.address} (${keys.type}${isEncrypted(file) ? ', encrypted' : ', NOT encrypted'})`);
       return;
     }
     case 'address': {
@@ -89,8 +115,8 @@ async function main(argv) {
         port: config.port,
         host: config.host,
         peers: config.peers ?? [],
-        validatorKey: config.validatorKey ? readKeyFile(resolve(config.validatorKey)).privateKey : null,
-        faucetKey: config.faucetKey ? readKeyFile(resolve(config.faucetKey)).privateKey : null,
+        validatorKey: config.validatorKey ? plainKey(resolve(config.validatorKey)) : null,
+        faucetKey: config.faucetKey ? plainKey(resolve(config.faucetKey)) : null,
         faucetAmount: config.faucetAmount,
         trustProxy: config.trustProxy,
         faucetAddressCooldownMs: config.faucetAddressCooldownMs,
@@ -118,7 +144,7 @@ async function main(argv) {
       const status = await fetchJson(`${rpc}/status`);
       const { decimals, symbol } = status.coin;
       const genesis = await fetchJson(`${rpc}/genesis`);
-      const key = readKeyFile(values.key);
+      const key = await loadSigningKey(values.key);
       const from = addressFromPublicKey(key.publicKey);
       const account = await fetchJson(`${rpc}/accounts/${from}`);
       const tx = createTransfer({
@@ -141,8 +167,8 @@ async function main(argv) {
     case 'pq-commit': {
       if (!values.key || !values['new-key']) throw new Error('--key and --new-key are required');
       const genesis = await fetchJson(`${rpc}/genesis`);
-      const oldKey = readKeyFile(values.key);
-      const newKey = readKeyFile(values['new-key']);
+      const oldKey = await loadSigningKey(values.key);
+      const newKey = await loadSigningKey(values['new-key']);
       if (!PQ_KEY_TYPES.includes(keyTypeOf(newKey.publicKey))) throw new Error('--new-key must be a post-quantum key file');
       const from = addressFromPublicKey(oldKey.publicKey);
       const account = await fetchJson(`${rpc}/accounts/${from}`);
@@ -167,8 +193,8 @@ tx ${hash}`);
     case 'migrate': {
       if (!values.key || !values['new-key']) throw new Error('--key and --new-key are required');
       const genesis = await fetchJson(`${rpc}/genesis`);
-      const oldKey = readKeyFile(values.key);
-      const newKey = readKeyFile(values['new-key']);
+      const oldKey = await loadSigningKey(values.key);
+      const newKey = await loadSigningKey(values['new-key']);
       const from = addressFromPublicKey(oldKey.publicKey);
       const account = await fetchJson(`${rpc}/accounts/${from}`);
       const tx = createMigration({

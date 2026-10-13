@@ -12,16 +12,20 @@ adding validators on other servers is the next step.
 
 ## Part 1 · On your Mac (once)
 
-**1. Create the treasury key. It never goes on the server.**
+**1. Create the treasury vault key. It never goes on the server.**
+
+Follow [FOUNDER-VAULT.md](FOUNDER-VAULT.md): the same steps make the treasury vault, an encrypted,
+hash-based (SLH-DSA-256s) key kept offline with 3 backups. In short:
 
 ```bash
+mkdir -p ~/argeni-vault && chmod 700 ~/argeni-vault
 cd ~/Documents/argeni-chain
-node src/cli.js keygen --out ~/Documents/ARGENI-TREASURY-KEEP-SECRET.json
+node src/cli.js keygen --out ~/argeni-vault/treasury.json --type slh-dsa-256s --encrypt
+node src/cli.js check-key --key ~/argeni-vault/treasury.json
 ```
 
-Copy the `address ag…` line it prints. You'll need it in step 8.
-Back the file up on a USB drive or in a password manager. Never upload it, email it or paste it
-anywhere: it controls the 999,000,000 test ARGENI, and later the real treasury will work the same way.
+Copy the `address ag…` line it prints. You'll need it in step 8. Never upload the key file or the
+passphrase anywhere.
 
 **2. Create an SSH key** (lets you log in to the server securely, without a password):
 
