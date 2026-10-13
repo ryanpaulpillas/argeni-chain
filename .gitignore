@@ -1,3 +1,5 @@
 node_modules/
 devnet/
 *.key.json
+testnet/
+argeni-bundle*
