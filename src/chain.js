@@ -3,7 +3,7 @@
 // joins the chain only with a commit certificate signed by a quorum of validators.
 import fs from 'node:fs';
 import path from 'node:path';
-import { addressFromPublicKey, canonical, hashObject, isAddress, isPublicKey, keyTypeOf, merkleRoot, verify } from './crypto.js';
+import { addressFromPublicKey, canonical, hashObject, isAddress, isPublicKey, keyTypeOf, merkleRoot, verify, KEY_TYPES } from './crypto.js';
 import { checkTx, txHash } from './tx.js';
 import { State, migrationError } from './state.js';
 import { isUnits } from './coin.js';
@@ -40,6 +40,9 @@ export function validateGenesis(genesis) {
   const v = genesis.validators;
   if (!Array.isArray(v) || !v.length || !v.every(isPublicKey) || new Set(v).size !== v.length) errors.push('validators');
   if (genesis.ed25519SunsetHeight !== undefined && (!Number.isSafeInteger(genesis.ed25519SunsetHeight) || genesis.ed25519SunsetHeight < 1)) errors.push('ed25519SunsetHeight');
+  if (genesis.retiredKeyTypes !== undefined && (typeof genesis.retiredKeyTypes !== 'object' || Array.isArray(genesis.retiredKeyTypes)
+    || !Object.entries(genesis.retiredKeyTypes).every(([type, h]) => KEY_TYPES.includes(type) && Number.isSafeInteger(h) && h >= 1))) errors.push('retiredKeyTypes');
+  if (genesis.maxBlockBytes !== undefined && (!Number.isSafeInteger(genesis.maxBlockBytes) || genesis.maxBlockBytes < 100_000)) errors.push('maxBlockBytes');
   if (!genesis.alloc || !Object.entries(genesis.alloc).every(([a, amt]) => isAddress(a) && isUnits(amt))) {
     errors.push('alloc');
   } else if (isUnits(genesis.maxSupply)) {
@@ -49,13 +52,24 @@ export function validateGenesis(genesis) {
   if (errors.length) throw new Error(`invalid genesis: ${errors.join(', ')}`);
 }
 
-// Post-quantum policy: from genesis.ed25519SunsetHeight on, Ed25519 keys may only be used to
-// migrate to a post-quantum key. Returns an error string or null.
-export function sunsetError(genesis, tx, height) {
-  const sunset = genesis.ed25519SunsetHeight;
-  if (!sunset || height < sunset || tx.type === 'migrate' || keyTypeOf(tx.from) !== 'ed25519') return null;
-  return `Ed25519 keys were retired at block ${sunset}; migrate this account to a post-quantum key`;
+// Algorithm retirement: genesis.retiredKeyTypes maps a key type to the block height from which it is
+// retired (genesis.ed25519SunsetHeight is the older spelling for Ed25519). A retired key may only be
+// used to migrate its account to a key type that is still active.
+export function retiredAt(genesis, type) {
+  return genesis.retiredKeyTypes?.[type] ?? (type === 'ed25519' ? genesis.ed25519SunsetHeight : undefined);
 }
+
+// Returns an error string or null.
+export function sunsetError(genesis, tx, height) {
+  const sunset = retiredAt(genesis, keyTypeOf(tx.from));
+  if (!sunset || height < sunset || tx.type === 'migrate') return null;
+  return `${keyTypeOf(tx.from)} keys were retired at block ${sunset}; migrate this account to an active post-quantum key`;
+}
+
+// Byte size of a transaction as it travels and is stored (bounds block size, since hash-based
+// signatures are tens of kilobytes).
+const DEFAULT_MAX_BLOCK_BYTES = 8_000_000;
+const txBytes = (tx) => Buffer.byteLength(JSON.stringify(tx));
 
 export class Chain {
   constructor(genesis, { dataDir = null, now = () => Date.now() } = {}) {
@@ -150,7 +164,7 @@ export class Chain {
 
   // Inputs to the migration security rules (state.js migrationError) for a block at `height`.
   migrationPolicy(height) {
-    return { height, sunset: this.genesis.ed25519SunsetHeight };
+    return { height, retiredAt: (type) => retiredAt(this.genesis, type) };
   }
 
   // True if at least one pending transaction could go into the next block right now.
@@ -172,9 +186,11 @@ export class Chain {
     const proposerAddress = addressFromPublicKey(proposer);
     const state = this.state.clone();
     const included = [];
+    let bytes = 0;
     const candidates = [...this.mempool.values()].sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : a.nonce - b.nonce));
     for (const tx of candidates) {
       if (included.length >= this.genesis.maxTxsPerBlock) break;
+      if (bytes + txBytes(tx) > (this.genesis.maxBlockBytes ?? DEFAULT_MAX_BLOCK_BYTES)) continue;
       if (sunsetError(this.genesis, tx, this.height + 1)) continue;
       const attempt = state.clone();
       try {
@@ -184,6 +200,7 @@ export class Chain {
       }
       state.accounts = attempt.accounts;
       included.push(tx);
+      bytes += txBytes(tx);
     }
     state.mint(proposerAddress, BigInt(this.genesis.blockReward), BigInt(this.genesis.maxSupply));
     const header = {
@@ -210,6 +227,7 @@ export class Chain {
     if (!this.validators.has(header.proposer)) return { error: 'proposer is not a validator' };
     if (block.hash !== hashObject(header)) return { error: 'hash does not match header' };
     if (block.txs.length > this.genesis.maxTxsPerBlock) return { error: 'too many transactions' };
+    if (block.txs.reduce((sum, tx) => sum + txBytes(tx), 0) > (this.genesis.maxBlockBytes ?? DEFAULT_MAX_BLOCK_BYTES)) return { error: 'block too large' };
     if (header.txRoot !== merkleRoot(block.txs.map(txHash))) return { error: 'txRoot mismatch' };
 
     const proposerAddress = addressFromPublicKey(header.proposer);

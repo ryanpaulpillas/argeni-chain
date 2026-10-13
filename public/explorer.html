@@ -161,7 +161,7 @@
   <div class="pills">
     <span class="pill"><span class="dot c"></span>BFT Consensus</span>
     <span class="pill"><span class="dot v"></span>1,000,000,000 ARGENI · fixed supply</span>
-    <span class="pill"><span class="dot a"></span>ML-DSA-65 post-quantum signatures</span>
+    <span class="pill"><span class="dot a"></span>ML-DSA-87 &amp; SLH-DSA post-quantum signatures</span>
     <span class="pill"><span class="dot c"></span>Devnet Live</span>
   </div>
 </div></div>
@@ -217,14 +217,20 @@ async function get(path, base = API) {
 // Same rule as the node: Ed25519 = sha256(raw key); post-quantum = sha256(type label || SPKI DER),
 // with label "mldsa65:" (ML-DSA-65) or "slhdsa128s:" (SLH-DSA-128s).
 async function addressOf(pubKey) {
-  const prefix = ['mldsa65:', 'slhdsa128s:'].find((p) => pubKey.startsWith(p)) ?? '';
+  // Same rule as the node: sha256(label || key); post-quantum keys carry a "label:" prefix.
+  const prefix = pubKey.includes(':') ? pubKey.slice(0, pubKey.indexOf(':') + 1) : '';
   const raw = pubKey.slice(prefix.length).match(/../g).map((h) => parseInt(h, 16));
   const bytes = new Uint8Array([...new TextEncoder().encode(prefix), ...raw]);
   const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
-  return 'ag' + [...hash.slice(0, 20)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return 'ag' + [...hash].map((b) => b.toString(16).padStart(2, '0')).join(''); // 256-bit address
 }
 
-const PQ_LABEL = { 'ml-dsa-65': 'ML-DSA-65 · post-quantum (FIPS 204)', 'slh-dsa-128s': 'SLH-DSA-128s · hash-based post-quantum (FIPS 205)' };
+const PQ_LABEL = {
+  'ml-dsa-87': 'ML-DSA-87 · post-quantum, NIST category 5 (FIPS 204)',
+  'ml-dsa-65': 'ML-DSA-65 · post-quantum, category 3 (FIPS 204)',
+  'slh-dsa-256s': 'SLH-DSA-256s · hash-based post-quantum, category 5 (FIPS 205)',
+  'slh-dsa-128s': 'SLH-DSA-128s · hash-based post-quantum, category 1 (FIPS 205)',
+};
 const addrLink = (a, len = [8, 6]) => {
   if (!a) return '<span class="muted">—</span>';
   const label = names.get(a);
@@ -410,7 +416,7 @@ const routes = [
   [/^#\/validators$/, () => viewValidators(), 'validators', true],
   [/^#\/block\/(\d+)$/, (m) => viewBlock(m[1]), 'blocks', false],
   [/^#\/tx\/([0-9a-f]{64})$/, (m) => viewTx(m[1]), 'txs', 'pending'],
-  [/^#\/address\/(ag[0-9a-f]{40})$/, (m) => viewAddress(m[1]), '', true],
+  [/^#\/address\/(ag[0-9a-f]{64})$/, (m) => viewAddress(m[1]), '', true],
 ];
 const currentRoute = () => routes.find(([re]) => re.test(location.hash));
 
@@ -454,7 +460,7 @@ $('searchForm').addEventListener('submit', async (e) => {
   const q = $('q').value.trim().toLowerCase();
   $('searchMsg').textContent = '';
   if (/^\d+$/.test(q)) location.hash = `#/block/${Number(q)}`;
-  else if (/^ag[0-9a-f]{40}$/.test(q)) location.hash = `#/address/${q}`;
+  else if (/^ag[0-9a-f]{64}$/.test(q)) location.hash = `#/address/${q}`;
   else if (/^[0-9a-f]{64}$/.test(q)) {
     // A 64-character hex string is either a transaction hash or a block hash.
     try { await get(`/txs/${q}`); location.hash = `#/tx/${q}`; }

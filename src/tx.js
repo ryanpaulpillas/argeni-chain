@@ -1,11 +1,12 @@
 // Transactions: build, sign, hash and stateless validation.
 //   transfer  move ARGENI from one account to an address (any key type)
-//   pq-commit lock in, ahead of time, the post-quantum key an Ed25519 account will migrate to. It records
-//             only a hash of the future address, so the new key stays private until the migration.
-//   migrate   move a whole Ed25519 account to a new post-quantum key (ML-DSA-65 or SLH-DSA-128s).
-//             Signed by BOTH keys, so it proves control of the old account and possession of the new
-//             key; the old account is then locked for good. If the account made a pq-commit, the new
-//             key must match it (see chain.js migrationError).
+//   pq-commit lock in, ahead of time, the post-quantum key an account will migrate to. It records only
+//             a hash of the future address, so the new key stays private until the migration.
+//   migrate   move a whole account to a different post-quantum key: Ed25519 -> post-quantum, or one
+//             post-quantum key to another (e.g. ML-DSA -> SLH-DSA if lattice schemes are ever weakened,
+//             or simply to rotate a key). Signed by BOTH keys, so it proves control of the old account
+//             and possession of the new key; the old account is then locked for good. If the account
+//             made a pq-commit, the new key must match it (see state.js migrationError).
 import { canonical, hashObject, sha256, sign, verify, isAddress, isHex, isPublicKey, keyTypeOf, publicKeyFromPrivate, addressFromPublicKey, PQ_KEY_TYPES } from './crypto.js';
 import { isUnits } from './coin.js';
 
@@ -79,7 +80,6 @@ export function checkTx(tx, { chainId, minFee }) {
   if (tx.chainId !== chainId) return `wrong chainId (expected ${chainId})`;
   if (!isPublicKey(tx.from)) return 'from must be a public key';
   if (tx.type === 'pq-commit') {
-    if (keyTypeOf(tx.from) !== 'ed25519') return 'only Ed25519 accounts need a migration commitment';
     if (!isHex(tx.commitment, 32)) return 'commitment must be a 32-byte hex hash';
     if (!isUnits(tx.fee) || BigInt(tx.fee) < BigInt(minFee)) return `fee must be at least the minimum (${minFee})`;
     if (!Number.isSafeInteger(tx.nonce) || tx.nonce < 0) return 'nonce must be a non-negative integer';
@@ -87,8 +87,8 @@ export function checkTx(tx, { chainId, minFee }) {
     return null;
   }
   if (tx.type === 'migrate') {
-    if (keyTypeOf(tx.from) !== 'ed25519') return 'only Ed25519 accounts can migrate';
-    if (!PQ_KEY_TYPES.includes(keyTypeOf(tx.to)) || !isPublicKey(tx.to)) return 'migration target must be a post-quantum (ML-DSA-65 or SLH-DSA-128s) public key';
+    if (!PQ_KEY_TYPES.includes(keyTypeOf(tx.to)) || !isPublicKey(tx.to)) return `migration target must be a post-quantum public key (${PQ_KEY_TYPES.join(', ')})`;
+    if (tx.to === tx.from) return 'migration target must be a different key';
     if (!isUnits(tx.fee) || BigInt(tx.fee) < BigInt(minFee)) return `fee must be at least the minimum (${minFee})`;
     if (!Number.isSafeInteger(tx.nonce) || tx.nonce < 0) return 'nonce must be a non-negative integer';
     const bytes = canonical(txBody(tx));

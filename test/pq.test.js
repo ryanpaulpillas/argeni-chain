@@ -53,7 +53,7 @@ test('ML-DSA-65 keys sign and verify; signatures do not cross key types', () => 
   assert.equal(verify('hello', sign('hello', ed.privateKey), pq.publicKey), false);
   assert.equal(verify('hello', sig, ed.publicKey), false);
   assert.notEqual(addressFromPublicKey(pq.publicKey), addressFromPublicKey(ed.publicKey));
-  assert.match(addressFromPublicKey(pq.publicKey), /^ag[0-9a-f]{40}$/);
+  assert.match(addressFromPublicKey(pq.publicKey), /^ag[0-9a-f]{64}$/);
 });
 
 test('a post-quantum account sends ARGENI, finalized by post-quantum validators', () => {
@@ -101,8 +101,11 @@ test('a migration needs valid signatures from both the old and the new key', () 
   const otherPq = generateKeyPair('ml-dsa-65');
   assert.match(checkTx({ ...good, to: otherPq.publicKey }, ctx.genesis), /invalid signature/);
   assert.match(checkTx({ ...good, pqSignature: sign('x', newKey.privateKey) }, ctx.genesis), /invalid post-quantum signature/);
+  // Post-quantum accounts can rotate to another post-quantum key, but not "migrate" to themselves.
   const fromPq = createMigration({ chainId: ctx.genesis.chainId, privateKey: ctx.pq.privateKey, pqPrivateKey: newKey.privateKey, fee: FEE, nonce: 0 });
-  assert.match(checkTx(fromPq, ctx.genesis), /only Ed25519 accounts can migrate/);
+  assert.equal(checkTx(fromPq, ctx.genesis), null);
+  const toSelf = createMigration({ chainId: ctx.genesis.chainId, privateKey: ctx.pq.privateKey, pqPrivateKey: ctx.pq.privateKey, fee: FEE, nonce: 0 });
+  assert.match(checkTx(toSelf, ctx.genesis), /different key/);
   assert.equal(checkTx(good, ctx.genesis), null);
 });
 
@@ -167,7 +170,7 @@ test('SLH-DSA-128s (hash-based, FIPS 205) keys sign, verify and send ARGENI', ()
   assert.equal(verify('hello', sig, slh.publicKey), true);
   assert.equal(verify('hellO', sig, slh.publicKey), false);
   assert.equal(verify('hello', sign('hello', generateKeyPair('ml-dsa-65').privateKey), slh.publicKey), false);
-  assert.match(addressFromPublicKey(slh.publicKey), /^ag[0-9a-f]{40}$/);
+  assert.match(addressFromPublicKey(slh.publicKey), /^ag[0-9a-f]{64}$/);
 
   const ctx = setup();
   const slhAddr = addressFromPublicKey(slh.publicKey);
@@ -178,14 +181,14 @@ test('SLH-DSA-128s (hash-based, FIPS 205) keys sign, verify and send ARGENI', ()
   assert.equal(ctx.chain.state.get(slhAddr).balance, 4n * ONE - FEE);
 });
 
-test('a commitment is bound to its chain and account and can only come from an Ed25519 key', () => {
+test('a commitment is bound to its chain and account, from any key type', () => {
   const ctx = setup();
   const newKey = generateKeyPair('ml-dsa-65');
   const good = commit(ctx, ctx.legacy, newKey, 0);
   assert.equal(checkTx(good, ctx.genesis), null);
   assert.match(checkTx({ ...good, commitment: 'ab'.repeat(32) }, ctx.genesis), /invalid signature/);
   assert.match(checkTx({ ...good, commitment: 'zz' }, ctx.genesis), /32-byte hex/);
-  assert.match(checkTx(commit(ctx, ctx.pq, newKey, 0), ctx.genesis), /only Ed25519/);
+  assert.equal(checkTx(commit(ctx, ctx.pq, newKey, 0), ctx.genesis), null, 'post-quantum accounts can commit to a rotation too');
   // A transfer after committing keeps the commitment (and the commitment changes the state root).
   ctx.chain.addTx(good);
   finalize(ctx);

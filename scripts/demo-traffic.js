@@ -10,7 +10,7 @@ const INTERVAL_MS = 1500;
 const MEMOS = ['coffee', 'rent share', 'invoice #1042', 'thanks!', 'lunch', 'refund', 'test payment', ''];
 
 const wallets = ['Alice', 'Bob', 'Carol', 'Dave'].map((name) => {
-  const keys = generateKeyPair('ml-dsa-65');
+  const keys = generateKeyPair('ml-dsa-87');
   return { name, ...keys, address: addressFromPublicKey(keys.publicKey) };
 });
 const pick = (list) => list[Math.floor(Math.random() * list.length)];

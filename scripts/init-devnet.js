@@ -19,10 +19,10 @@ if (fs.existsSync(root)) {
   process.exit(1);
 }
 
-// All keys are post-quantum (ML-DSA-65).
-const validators = Array.from({ length: VALIDATORS }, (_, i) => writeKeyFile(path.join(root, 'keys', `validator-${i + 1}.json`), generateKeyPair('ml-dsa-65')));
-const faucet = writeKeyFile(path.join(root, 'keys', 'faucet.json'), generateKeyPair('ml-dsa-65'));
-const treasury = writeKeyFile(path.join(root, 'keys', 'treasury.json'), generateKeyPair('ml-dsa-65'));
+// All keys are post-quantum: ML-DSA-87 (FIPS 204, NIST category 5).
+const validators = Array.from({ length: VALIDATORS }, (_, i) => writeKeyFile(path.join(root, 'keys', `validator-${i + 1}.json`), generateKeyPair('ml-dsa-87')));
+const faucet = writeKeyFile(path.join(root, 'keys', 'faucet.json'), generateKeyPair('ml-dsa-87'));
+const treasury = writeKeyFile(path.join(root, 'keys', 'treasury.json'), generateKeyPair('ml-dsa-87'));
 
 // Fixed supply: all 1 billion ARGENI exist from genesis and blockReward is 0, so no coin is
 // ever minted; validators earn transaction fees. How the supply is split (team, ecosystem,

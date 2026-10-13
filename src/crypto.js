@@ -1,4 +1,5 @@
-// Hashing, signature keys (Ed25519, post-quantum ML-DSA-65 and SLH-DSA) and addresses. Uses only node:crypto.
+// Hashing, signature keys (Ed25519 and the NIST post-quantum ML-DSA and SLH-DSA families) and
+// addresses. Uses only node:crypto.
 import crypto from 'node:crypto';
 
 // DER prefixes that wrap a raw 32-byte Ed25519 key so node:crypto accepts it.
@@ -23,19 +24,33 @@ export function hashObject(obj) {
   return sha256(canonical(obj));
 }
 
-// Key types. Keys are passed around as strings:
-//   ed25519      public "<64 hex>" (raw 32 bytes)          private "<64 hex>" (raw 32-byte seed)
-//   ml-dsa-65    public "mldsa65:<hex SPKI DER>"           private "mldsa65:<hex PKCS#8 DER>"
-//   slh-dsa-128s public "slhdsa128s:<hex SPKI DER>"        private "slhdsa128s:<hex PKCS#8 DER>"
-// ML-DSA-65 is the NIST lattice-based post-quantum signature standard (FIPS 204, category 3): small
-// and fast, the default. SLH-DSA-SHA2-128s (FIPS 205, category 1) is hash-based: its security rests
-// only on SHA-256, so it stays safe even if lattice schemes are ever broken. Signatures are larger
-// (7,856 bytes) and slower to make (~0.2 s), so it suits savings and cold-storage accounts.
-export const KEY_TYPES = ['ml-dsa-65', 'slh-dsa-128s', 'ed25519'];
-export const PQ_KEY_TYPES = ['ml-dsa-65', 'slh-dsa-128s'];
+// Key types. Keys are passed around as strings: Ed25519 public keys as 64 hex characters (raw 32
+// bytes, private: the raw 32-byte seed); post-quantum keys as "<label>:" + hex of the SPKI / PKCS#8 DER.
+//
+//   ml-dsa-87     FIPS 204, lattice-based, NIST category 5 (highest). The default for new keys.
+//   ml-dsa-65     FIPS 204, lattice-based, category 3. Smaller and still strong.
+//   slh-dsa-256s  FIPS 205, hash-based, category 5. Security rests only on SHA-256, a different
+//                 family of mathematics from the lattices, so it is the fallback if lattice schemes
+//                 are ever weakened. Large signatures (29,792 bytes, ~0.4 s to sign): savings and
+//                 cold-storage accounts, treasuries.
+//   slh-dsa-128s  FIPS 205, hash-based, category 1. Smaller hash-based option (7,856-byte signatures).
+//   ed25519       RFC 8032, classical. Kept so older accounts work; can be retired and migrated away.
+export const KEY_TYPES = ['ml-dsa-87', 'ml-dsa-65', 'slh-dsa-256s', 'slh-dsa-128s', 'ed25519'];
+export const PQ_KEY_TYPES = ['ml-dsa-87', 'ml-dsa-65', 'slh-dsa-256s', 'slh-dsa-128s'];
+export const DEFAULT_KEY_TYPE = 'ml-dsa-87';
 const PQ = {
+  'ml-dsa-87': { prefix: 'mldsa87:', node: 'ml-dsa-87', sigBytes: 4627 },
   'ml-dsa-65': { prefix: 'mldsa65:', node: 'ml-dsa-65', sigBytes: 3309 },
+  'slh-dsa-256s': { prefix: 'slhdsa256s:', node: 'slh-dsa-sha2-256s', sigBytes: 29792 },
   'slh-dsa-128s': { prefix: 'slhdsa128s:', node: 'slh-dsa-sha2-128s', sigBytes: 7856 },
+};
+// What each key type is, for explorers, wallets and documentation.
+export const KEY_INFO = {
+  'ml-dsa-87': { standard: 'FIPS 204', family: 'lattice', category: 5, postQuantum: true },
+  'ml-dsa-65': { standard: 'FIPS 204', family: 'lattice', category: 3, postQuantum: true },
+  'slh-dsa-256s': { standard: 'FIPS 205', family: 'hash', category: 5, postQuantum: true },
+  'slh-dsa-128s': { standard: 'FIPS 205', family: 'hash', category: 1, postQuantum: true },
+  ed25519: { standard: 'RFC 8032', family: 'elliptic curve', category: 0, postQuantum: false },
 };
 
 function pqSpec(key) {
@@ -54,7 +69,7 @@ export function isPublicKey(value) {
   if (type === 'ed25519') return true;
   if (!PQ[type]) return false;
   const hex = value.slice(PQ[type].prefix.length);
-  return hex.length > 0 && hex.length <= 8000 && /^[0-9a-f]+$/.test(hex) && hex.length % 2 === 0;
+  return hex.length > 0 && hex.length <= 6000 && /^[0-9a-f]+$/.test(hex) && hex.length % 2 === 0;
 }
 
 export function generateKeyPair(type = 'ed25519') {
@@ -115,19 +130,21 @@ export function verify(message, signatureHex, publicKey) {
   return false;
 }
 
-// Address = "ag" + first 20 bytes of sha256 of the public key.
-// Ed25519: sha256(raw 32-byte key). Post-quantum: sha256(type label || SPKI DER), e.g. "mldsa65:" or
-// "slhdsa128s:", so addresses of different key types never collide.
+// Address = "ag" + all 32 bytes of sha256 of the public key (64 hex characters). A full 256-bit hash
+// keeps 128-bit security even against Grover's quantum search for a key matching an address.
+// Ed25519: sha256(raw 32-byte key). Post-quantum: sha256(type label || SPKI DER), e.g. "mldsa87:",
+// so addresses of different key types never collide.
+export const ADDRESS_HEX_LENGTH = 64;
 export function addressFromPublicKey(publicKey) {
   const pq = pqSpec(publicKey);
   const bytes = pq
     ? Buffer.concat([Buffer.from(pq[1].prefix), Buffer.from(publicKey.slice(pq[1].prefix.length), 'hex')])
     : Buffer.from(publicKey, 'hex');
-  return ADDRESS_PREFIX + sha256(bytes).slice(0, 40);
+  return ADDRESS_PREFIX + sha256(bytes);
 }
 
 export function isAddress(value) {
-  return typeof value === 'string' && value.startsWith(ADDRESS_PREFIX) && isHex(value.slice(ADDRESS_PREFIX.length), 20);
+  return typeof value === 'string' && value.startsWith(ADDRESS_PREFIX) && isHex(value.slice(ADDRESS_PREFIX.length), 32);
 }
 
 export function isHex(value, bytes) {

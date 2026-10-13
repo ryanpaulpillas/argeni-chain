@@ -4,7 +4,7 @@
 //
 // The treasury (999,000,000 test ARGENI) is only an ADDRESS here: its key is created on the
 // operator's own computer and never touches the server. Validator and faucet keys are created
-// here, post-quantum (ML-DSA-65), readable only by the user running this script.
+// here, post-quantum (ML-DSA-87), readable only by the user running this script.
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -38,8 +38,8 @@ if (fs.existsSync(root)) {
 
 const DECIMALS = 18;
 const BASE_PORT = 26601;
-const validators = Array.from({ length: count }, (_, i) => writeKeyFile(path.join(root, 'keys', `validator-${i + 1}.json`), generateKeyPair('ml-dsa-65')));
-const faucet = writeKeyFile(path.join(root, 'keys', 'faucet.json'), generateKeyPair('ml-dsa-65'));
+const validators = Array.from({ length: count }, (_, i) => writeKeyFile(path.join(root, 'keys', `validator-${i + 1}.json`), generateKeyPair('ml-dsa-87')));
+const faucet = writeKeyFile(path.join(root, 'keys', 'faucet.json'), generateKeyPair('ml-dsa-87'));
 
 const genesis = {
   chainId: values['chain-id'],
@@ -84,7 +84,7 @@ for (let i = 1; i <= count; i++) {
 
 console.log(`testnet created in ${root}
 chain id    ${genesis.chainId}
-validators  ${count} (ML-DSA-65, post-quantum)
+validators  ${count} (ML-DSA-87, post-quantum, NIST category 5)
 treasury    ${values.treasury}  999,000,000 test ARGENI (key stays off this server)
 faucet      ${faucet.address}  1,000,000 test ARGENI, served by node 1
 Back up ${path.join(root, 'keys')} somewhere safe and private.`);

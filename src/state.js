@@ -1,24 +1,29 @@
 // Account state: balance (BigInt base units), nonce, an optional pqCommit (hash of the post-quantum
 // address the account has committed to migrate to) and, after a migration, migratedTo per address,
 // plus total supply.
-import { addressFromPublicKey, hashObject } from './crypto.js';
+import { addressFromPublicKey, hashObject, keyTypeOf } from './crypto.js';
 import { migrationCommitment } from './tx.js';
 
-// Migration security rules. `policy` = { height, sunset }: the block the tx goes into and
-// genesis.ed25519SunsetHeight. Returns an error string or null.
+// Migration security rules. `policy` = { height, retiredAt }: the block the tx goes into and a
+// function giving the block height at which a key type is retired (or undefined). Returns an error
+// string or null.
 //  - If the account committed to a post-quantum key (pq-commit), it can only migrate to that key.
 //    So even an attacker who later recovers the Ed25519 key with a quantum computer can't redirect
 //    the funds: new commitments are refused after the sunset, and the old one can't be changed.
-//  - After the sunset, an account without a commitment can migrate only if its Ed25519 public key
-//    was never published (it never signed a transaction), so a quantum attacker had nothing to work on.
-export function migrationError(account, tx, { height, sunset } = {}) {
+//  - After its key type is retired, an account without a commitment can migrate only if its public
+//    key was never published (it never signed a transaction), so a quantum attacker had nothing to work on.
+//  - A migration can't move funds onto a key type that is itself retired.
+export function migrationError(account, tx, { height, retiredAt = () => undefined } = {}) {
   const from = addressFromPublicKey(tx.from);
   const target = addressFromPublicKey(tx.to);
+  const targetRetired = retiredAt(keyTypeOf(tx.to));
+  if (targetRetired && height >= targetRetired) return `${keyTypeOf(tx.to)} keys were retired at block ${targetRetired}; choose another post-quantum key type`;
   if (account.pqCommit) {
     return account.pqCommit === migrationCommitment(tx.chainId, from, target) ? null : 'this account committed to a different post-quantum key; it can only migrate to that key';
   }
+  const sunset = retiredAt(keyTypeOf(tx.from));
   if (sunset && height >= sunset && account.nonce > 0) {
-    return `this account's Ed25519 key was exposed and it made no migration commitment before block ${sunset}; it can't migrate safely`;
+    return `this account's ${keyTypeOf(tx.from)} key was exposed and it made no migration commitment before block ${sunset}; it can't migrate safely`;
   }
   return null;
 }

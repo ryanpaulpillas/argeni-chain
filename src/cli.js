@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { generateKeyPair, addressFromPublicKey, keyTypeOf, KEY_TYPES, PQ_KEY_TYPES } from './crypto.js';
+import { generateKeyPair, addressFromPublicKey, keyTypeOf, KEY_TYPES, PQ_KEY_TYPES, DEFAULT_KEY_TYPE } from './crypto.js';
 import { createTransfer, createMigration, createMigrationCommit } from './tx.js';
 import { formatAmount, parseAmount } from './coin.js';
 import { Node, fetchJson } from './node.js';
@@ -13,20 +13,22 @@ const DEFAULT_RPC = 'http://127.0.0.1:26601';
 
 const USAGE = `argeni <command> [options]
 
-  keygen --out <file> [--type ml-dsa-65|slh-dsa-128s|ed25519]
-                                              create a new key file (default: post-quantum ML-DSA-65;
-                                              slh-dsa-128s is hash-based, for savings/cold storage)
+  keygen --out <file> [--type ml-dsa-87|ml-dsa-65|slh-dsa-256s|slh-dsa-128s|ed25519]
+                                              create a new key file (default: post-quantum ML-DSA-87,
+                                              NIST category 5; slh-dsa-256s is hash-based, category 5,
+                                              for savings, cold storage and treasuries)
   address --key <file>                        print the address of a key file
   node --config <file>                        run a node
   status [--rpc <url>]                        show chain status
   balance <address> [--rpc <url>]             show an account balance
   send --key <file> --to <address> --amount <ARGENI> [--fee <ARGENI>] [--memo <text>] [--rpc <url>]
   faucet <address> [--rpc <url>]              request testnet ARGENI
-  pq-commit --key <old ed25519 file> --new-key <post-quantum file> [--rpc <url>]
-                                              lock in the post-quantum key an Ed25519 account will
-                                              migrate to (do this before the sunset height)
-  migrate --key <old ed25519 file> --new-key <post-quantum file> [--rpc <url>]
-                                              move a whole Ed25519 account to a post-quantum key
+  pq-commit --key <current key file> --new-key <post-quantum file> [--rpc <url>]
+                                              lock in the key this account will migrate to
+                                              (do this before its key type is retired)
+  migrate --key <current key file> --new-key <post-quantum file> [--rpc <url>]
+                                              move a whole account to a different post-quantum key
+                                              (Ed25519 -> post-quantum, or rotate e.g. ML-DSA -> SLH-DSA)
 
 Default --rpc is ${DEFAULT_RPC}.`;
 
@@ -50,7 +52,7 @@ async function main(argv) {
     allowPositionals: true,
     options: {
       out: { type: 'string' },
-      type: { type: 'string', default: 'ml-dsa-65' },
+      type: { type: 'string', default: DEFAULT_KEY_TYPE },
       'new-key': { type: 'string' },
       key: { type: 'string' },
       config: { type: 'string' },
