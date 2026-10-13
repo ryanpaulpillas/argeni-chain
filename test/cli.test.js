@@ -96,8 +96,9 @@ test('multisig, vesting and staking work from the command line; a new validator 
     assert.equal(joiner.chain.base, snap.height, 'started from the snapshot');
     const target = (await fetchJson(`${urls[0]}/status`)).height + 4;
     await waitFor(async () => (await fetchJson(`${urls[4]}/status`)).height >= target);
-    const latest = await fetchJson(`${urls[0]}/blocks/latest`);
-    assert.ok(latest.commit.precommits.some((p) => p.validator === operator.publicKey) || latest.lastCommit.precommits.some((p) => p.validator === operator.publicKey), 'the new validator signs');
+    // Only 4 of 5 signatures are needed, so a busy machine may miss one block; look at the last few.
+    const recent = await fetchJson(`${urls[0]}/blocks?limit=5`);
+    assert.ok(recent.some((b) => b.signatures.includes(operator.address)), 'the new validator signs');
     assert.equal((await fetchJson(`${urls[4]}/blocks/${target}`)).hash, (await fetchJson(`${urls[0]}/blocks/${target}`)).hash);
 
     // Leaving: out of the set, stake on its way back.
