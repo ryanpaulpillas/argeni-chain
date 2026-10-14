@@ -4,7 +4,8 @@ import http from 'node:http';
 import path from 'node:path';
 import { Chain } from './chain.js';
 import { Consensus } from './consensus.js';
-import { addressFromPublicKey, isAddress, keyTypeOf, parseMultisig, publicKeyFromPrivate } from './crypto.js';
+import { addressFromPublicKey, generateKeyPair, isAddress, keyTypeOf, parseMultisig, publicKeyFromPrivate, PQ_KEY_TYPES } from './crypto.js';
+import { createHello, acceptHello, completeHello, SESSION_MAX_AGE_MS } from './p2p.js';
 import { createTransfer, createTx, txHash } from './tx.js';
 import { formatAmount, parseAmount } from './coin.js';
 import { totalLocked, vestingEnd } from './state.js';
@@ -16,6 +17,7 @@ const SYNC_INTERVAL_MS = 3_000;
 const PRUNE_INTERVAL_MS = 60_000;
 const SNAPSHOTS_KEPT = 2;
 const MAX_PEERS = 64;
+const MAX_INBOUND_SESSIONS = 1024;
 
 export class Node {
   // Public-network options (all off by default, so a local devnet behaves as before):
@@ -27,7 +29,7 @@ export class Node {
   // a peer, checked against the hash) instead of replaying every block since genesis.
   constructor({ genesis, dataDir = null, port = 0, host = '127.0.0.1', peers = [], validatorKey = null, faucetKey = null, faucetAmount = '100',
     trustProxy = false, faucetAddressCooldownMs = 60_000, faucetIpCooldownMs = 0, txsPerMinutePerIp = 0, snapshotEvery = 1000, trustedBlock = null,
-    publicUrl = null, log = console.log }) {
+    publicUrl = null, encryptPeers = true, log = console.log }) {
     this.genesis = genesis;
     this.dataDir = dataDir;
     this.chain = new Chain(genesis, { dataDir });
@@ -37,6 +39,16 @@ export class Node {
     // Peer discovery: a node with a publicUrl announces it to its peers on start, so a new validator
     // joins the gossip without anyone editing other nodes' configs.
     this.relayed = new Set(); // consensus messages already passed on
+    // Encrypted peer links (p2p.js): ML-KEM-768 key exchange, ML-DSA identities, AES-256-GCM.
+    // A validator's identity is its validator key; any other node uses a fresh ML-DSA-65 key.
+    this.encryptPeers = encryptPeers;
+    const ownPq = validatorKey && PQ_KEY_TYPES.includes(keyTypeOf(publicKeyFromPrivate(validatorKey)));
+    this.identityKey = ownPq ? validatorKey : generateKeyPair('ml-dsa-65').privateKey;
+    this.identityPublic = publicKeyFromPrivate(this.identityKey);
+    this.outbound = new Map(); // peer URL -> Promise<Session>
+    this.pinnedPeers = new Map(); // peer URL -> identity key seen at the first handshake
+    this.inbound = new Map(); // session id -> Session
+    this.helloNonces = new Set();
     this.publicUrl = publicUrl ? publicUrl.replace(/\/$/, '') : null;
     this.port = port;
     this.host = host;
@@ -68,6 +80,7 @@ export class Node {
     await this.#announce();
     this.timers.push(setInterval(() => this.sync(), SYNC_INTERVAL_MS));
     this.timers.push(setInterval(() => this.#announce(), 60_000));
+    this.timers.push(setInterval(() => this.#pruneSessions(), 60_000));
     this.timers.push(setInterval(() => [this.faucetAddressLimit, this.faucetIpLimit, this.txLimit].forEach((l) => l.prune()), PRUNE_INTERVAL_MS));
     if (this.validatorKey) {
       this.consensus = new Consensus({
@@ -100,7 +113,7 @@ export class Node {
   async #fastSync() {
     const { height, hash } = this.trustedBlock;
     for (const peer of this.peers) {
-      const snap = await fetchJson(`${peer}/snapshot?height=${height}`, { timeoutMs: 120_000 }).catch(() => null);
+      const snap = await this.#peerCall(peer, 'GET', `/snapshot?height=${height}`, null, 120_000).catch(() => null);
       if (!snap) continue;
       try {
         Chain.verifySnapshot(this.genesis, snap, { height, hash });
@@ -171,9 +184,7 @@ export class Node {
   // Tells peers how to reach this node; they add it to their gossip list.
   async #announce() {
     if (!this.publicUrl) return;
-    await Promise.all(this.peers.map((peer) => fetchJson(`${peer}/peers`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: this.publicUrl, genesisHash: this.chain.genesisHash }),
-    }).catch(() => null)));
+    await Promise.all(this.peers.map((peer) => this.#peerCall(peer, 'POST', '/peers', { url: this.publicUrl, genesisHash: this.chain.genesisHash }).catch(() => null)));
   }
 
   // Pulls missing blocks from any peer that is ahead of us.
@@ -182,10 +193,10 @@ export class Node {
     this.syncing = true;
     try {
       for (const peer of this.peers) {
-        const status = await fetchJson(`${peer}/status`).catch(() => null);
+        const status = await this.#peerCall(peer, 'GET', '/status').catch(() => null);
         if (!status || status.chainId !== this.chain.genesis.chainId || status.genesisHash !== this.chain.genesisHash) continue;
         while (status.height > this.chain.height) {
-          const block = await fetchJson(`${peer}/blocks/${this.chain.height + 1}`).catch(() => null);
+          const block = await this.#peerCall(peer, 'GET', `/blocks/${this.chain.height + 1}`).catch(() => null);
           if (!block) break;
           const result = this.chain.addBlock(block);
           if (!result.ok) {
@@ -200,14 +211,90 @@ export class Node {
   }
 
   #broadcast(route, body) {
-    for (const peer of this.peers) {
-      fetch(`${peer}${route}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(5_000),
-      }).catch(() => {});
+    for (const peer of this.peers) this.#peerCall(peer, 'POST', route, body).catch(() => {});
+  }
+
+  // ---- encrypted peer channel (see p2p.js) ----
+
+  // One request to a peer over the encrypted channel; returns the decrypted response body.
+  async #peerCall(peer, method, path, body = null, timeoutMs = 5_000, retried = false) {
+    if (!this.encryptPeers) {
+      return fetchJson(`${peer}${path}`, method === 'GET' ? { timeoutMs } : { method, timeoutMs, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     }
+    const session = await this.#session(peer);
+    const request = session.encryptRequest({ method, path, body });
+    const res = await fetch(`${peer}/p2p`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request), signal: AbortSignal.timeout(timeoutMs) });
+    const out = await res.json().catch(() => ({}));
+    if (res.status === 409 && !retried) { // the peer restarted or dropped the session: shake hands again
+      this.outbound.delete(peer);
+      return this.#peerCall(peer, method, path, body, timeoutMs, true);
+    }
+    if (!res.ok) throw new Error(out.error ?? `HTTP ${res.status}`);
+    const reply = session.decryptReply(request.seq, out.ct);
+    if (reply.status >= 400) throw new Error(reply.body?.error ?? `HTTP ${reply.status}`);
+    return reply.body;
+  }
+
+  #session(peer) {
+    const current = this.outbound.get(peer);
+    if (current && !current.expiredAt?.()) return current;
+    const opening = (async () => {
+      const { hello, kemPrivateKey } = createHello({ chainId: this.genesis.chainId, genesisHash: this.chain.genesisHash, identityKey: this.identityKey, identityPublicKey: this.identityPublic });
+      const reply = await fetchJson(`${peer}/p2p/handshake`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hello }) });
+      const session = completeHello(hello, kemPrivateKey, reply, { expectedPeerKey: this.pinnedPeers.get(peer) ?? null });
+      if (!this.pinnedPeers.has(peer)) this.pinnedPeers.set(peer, session.peerKey);
+      return session;
+    })();
+    opening.expiredAt = () => false;
+    opening.then((session) => { opening.expiredAt = () => session.expired; }, () => this.outbound.delete(peer));
+    this.outbound.set(peer, opening);
+    return opening;
+  }
+
+  #pruneSessions() {
+    for (const [sid, s] of this.inbound) if (Date.now() - s.lastUsed > 2 * SESSION_MAX_AGE_MS) this.inbound.delete(sid);
+    if (this.helloNonces.size > 50_000) this.helloNonces.clear(); // hellos older than a minute are refused anyway
+  }
+
+  // POST /p2p/handshake and POST /p2p: answer a peer over the encrypted channel.
+  async #p2p(parts, body, res) {
+    const ctx = { chainId: this.genesis.chainId, genesisHash: this.chain.genesisHash, identityKey: this.identityKey, identityPublicKey: this.identityPublic, seenNonces: this.helloNonces };
+    if (parts[1] === 'handshake' && parts.length === 2) {
+      let accepted;
+      try {
+        accepted = acceptHello(body?.hello, ctx);
+      } catch (err) {
+        return send(res, 400, { error: `handshake refused: ${err.message}` });
+      }
+      if (this.inbound.size >= MAX_INBOUND_SESSIONS) {
+        const oldest = [...this.inbound.values()].sort((a, b) => a.lastUsed - b.lastUsed)[0];
+        this.inbound.delete(oldest.sid);
+      }
+      this.inbound.set(accepted.session.sid, accepted.session);
+      return send(res, 200, accepted.reply);
+    }
+    if (parts.length !== 1) return send(res, 404, { error: 'not found' });
+    const session = this.inbound.get(body?.sid);
+    if (!session) return send(res, 409, { error: 'unknown session; shake hands again' });
+    let request;
+    try {
+      request = session.decryptRequest(body);
+    } catch (err) {
+      return send(res, 400, { error: err.message });
+    }
+    const url = new URL(String(request?.path ?? ''), 'http://local');
+    const inner = parts2(url.pathname);
+    const out = collector();
+    try {
+      if (request.method === 'GET' && inner.length === 1 && inner[0] === 'network') send(out, 200, await this.#network());
+      else if (request.method === 'GET' && inner.length) this.#get(inner, out, url.searchParams);
+      else if (request.method === 'POST') await this.#post(inner, request.body, out, null, { fromPeer: true });
+      else send(out, 404, { error: 'not found' });
+    } catch (err) {
+      send(out, err.status ?? 500, { error: err.status ? err.message : 'internal error' });
+    }
+    const { status, body: replyBody } = await out.done;
+    return send(res, 200, session.encryptReply(body.seq, { status, body: replyBody }));
   }
 
   async #handle(req, res) {
@@ -219,6 +306,7 @@ export class Node {
     try {
       if (req.method === 'GET' && parts.length === 1 && parts[0] === 'network') return send(res, 200, await this.#network());
       if (req.method === 'GET') return this.#get(parts, res, url.searchParams);
+      if (req.method === 'POST' && parts[0] === 'p2p') return await this.#p2p(parts, await readJson(req), res);
       if (req.method === 'POST') return this.#post(parts, await readJson(req), res, this.#clientIp(req));
       return send(res, 405, { error: 'method not allowed' });
     } catch (err) {
@@ -269,6 +357,7 @@ export class Node {
         tipHash: chain.tipHash,
         validators: chain.validatorList.map(addressFromPublicKey),
         historyFrom: chain.base + 1,
+        p2p: { encrypted: this.encryptPeers, keyExchange: 'ML-KEM-768 (FIPS 203)', identity: addressFromPublicKey(this.identityPublic), cipher: 'AES-256-GCM', inboundSessions: this.inbound.size },
         snapshots: [...this.snapshots.values()].map((sn) => ({ height: sn.height, hash: sn.block.hash })),
         self: this.validatorKey ? addressFromPublicKey(publicKeyFromPrivate(this.validatorKey)) : null,
         quorum: chain.quorum,
@@ -369,7 +458,7 @@ export class Node {
     if (this.networkCache && Date.now() - this.networkCache.at < 2000) return this.networkCache.value;
     const summarize = (s) => s && { validator: s.self, height: s.height, consensus: s.consensus };
     const own = { validator: this.validatorKey ? addressFromPublicKey(publicKeyFromPrivate(this.validatorKey)) : null, height: this.chain.height, consensus: this.consensus?.status() ?? null };
-    const peers = await Promise.all(this.peers.map((p) => fetchJson(`${p}/status`).then(summarize).catch(() => null)));
+    const peers = await Promise.all(this.peers.map((p) => this.#peerCall(p, 'GET', '/status').then(summarize).catch(() => null)));
     const value = { validators: this.chain.validatorList.map(addressFromPublicKey), nodes: [own, ...peers.filter(Boolean)] };
     this.networkCache = { at: Date.now(), value };
     return value;
@@ -386,10 +475,14 @@ export class Node {
     return remote;
   }
 
-  #post(parts, body, res, ip) {
+  #post(parts, body, res, ip, { fromPeer = false } = {}) {
     const { chain } = this;
+    // Gossip between nodes only over the encrypted channel; wallets still send transactions directly.
+    if (this.encryptPeers && !fromPeer && ['blocks', 'consensus', 'peers'].includes(parts[0])) {
+      return send(res, 403, { error: 'node-to-node messages must use the encrypted peer channel (POST /p2p)' });
+    }
     if (parts[0] === 'txs' && parts.length === 1) {
-      const wait = this.txLimit.check(ip);
+      const wait = fromPeer ? 0 : this.txLimit.check(ip);
       if (wait) return send(res, 429, { error: `too many transactions from your address, try again in ${formatWait(wait)}` });
       const result = chain.addTx(body);
       if (!result.ok) return send(res, 400, { error: result.error });
@@ -543,6 +636,21 @@ function txFields(tx) {
     default:
       return { ...base, to: tx.to, amount: tx.amount, memo: tx.memo ?? '' };
   }
+}
+
+const parts2 = (pathname) => pathname.split('/').filter(Boolean);
+
+// A stand-in for an HTTP response, so the same handlers can answer requests from the encrypted channel.
+function collector() {
+  let resolve;
+  const out = {
+    status: 200,
+    done: new Promise((r) => { resolve = r; }),
+    setHeader() {},
+    writeHead(status) { out.status = status; },
+    end(data) { resolve({ status: out.status, body: data === undefined ? null : JSON.parse(data) }); },
+  };
+  return out;
 }
 
 function clampLimit(value, fallback) {

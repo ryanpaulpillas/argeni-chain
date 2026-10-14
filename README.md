@@ -67,7 +67,7 @@ blocks to different validators. The suite passed 16 runs in a row.
 
 - **Validator set changes / staking.** Validators are fixed in genesis, with equal voting power.
 - **Slashing.** Double-signing is ignored (first vote kept) but not punished.
-- **Peer-to-peer layer.** Peers are a static list over plain HTTP; no discovery, encryption or peer authentication.
+- **Peer-to-peer layer.** Node links are encrypted and authenticated (ML-KEM-768 key exchange, ML-DSA identities, AES-256-GCM; see `src/p2p.js`). Discovery is by announcement to known peers only.
 - **Smart contracts.** Only ARGENI transfers exist.
 - **Peer authentication, rate limiting and DoS protection** on the HTTP API.
 - **Efficient storage.** State is in memory and rebuilt on start; the state root is recomputed in full each block.
