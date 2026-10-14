@@ -1,7 +1,7 @@
 # Founder and treasury vault keys
 
 How to create and keep the keys that will hold large ARGENI allocations: the founders' 8%
-(80,000,000 ARGENI) and the treasury. The same steps work for the testnet treasury today.
+(40,000,000 ARGENI) and the treasury. The same steps work for the testnet treasury today.
 
 ## The setup
 

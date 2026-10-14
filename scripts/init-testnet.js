@@ -2,7 +2,7 @@
 //
 //   node scripts/init-testnet.js --treasury <ag… address> [--validators 4] [--out testnet]
 //
-// The treasury (999,000,000 test ARGENI) is only an ADDRESS here: its key is created on the
+// The treasury (499,000,000 test ARGENI) is only an ADDRESS here: its key is created on the
 // operator's own computer and never touches the server. Validator and faucet keys are created
 // here, post-quantum (ML-DSA-87), readable only by the user running this script.
 import fs from 'node:fs';
@@ -50,7 +50,7 @@ const genesis = {
   maxTxsPerBlock: 200, // post-quantum transactions are ~10 KB each
   minFee: parseAmount('0.0001', DECIMALS).toString(),
   blockReward: '0',
-  maxSupply: parseAmount('1000000000', DECIMALS).toString(),
+  maxSupply: parseAmount('500000000', DECIMALS).toString(),
   validators: validators.map((v) => v.publicKey),
   // Staking: new validators join by bonding at least minStake; penalties for double-signing and downtime.
   staking: {
@@ -64,7 +64,7 @@ const genesis = {
     doubleSignSlashBps: 500, // 5%
   },
   alloc: {
-    [values.treasury]: parseAmount('999000000', DECIMALS).toString(),
+    [values.treasury]: parseAmount('499000000', DECIMALS).toString(),
     [faucet.address]: parseAmount('1000000', DECIMALS).toString(),
   },
 };
@@ -96,6 +96,6 @@ for (let i = 1; i <= count; i++) {
 console.log(`testnet created in ${root}
 chain id    ${genesis.chainId}
 validators  ${count} (ML-DSA-87, post-quantum, NIST category 5)
-treasury    ${values.treasury}  999,000,000 test ARGENI (key stays off this server)
+treasury    ${values.treasury}  499,000,000 test ARGENI (key stays off this server)
 faucet      ${faucet.address}  1,000,000 test ARGENI, served by node 1
 Back up ${path.join(root, 'keys')} somewhere safe and private.`);

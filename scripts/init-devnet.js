@@ -11,7 +11,7 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'devn
 const VALIDATORS = 4;
 const BASE_PORT = 26601;
 const DECIMALS = 18;
-const MAX_SUPPLY = '1000000000'; // 1 billion ARGENI, all created at genesis
+const MAX_SUPPLY = '500000000'; // 500 million ARGENI, all created at genesis
 const FAUCET_SHARE = '1000000';
 
 if (fs.existsSync(root)) {
@@ -24,7 +24,7 @@ const validators = Array.from({ length: VALIDATORS }, (_, i) => writeKeyFile(pat
 const faucet = writeKeyFile(path.join(root, 'keys', 'faucet.json'), generateKeyPair('ml-dsa-87'));
 const treasury = writeKeyFile(path.join(root, 'keys', 'treasury.json'), generateKeyPair('ml-dsa-87'));
 
-// Fixed supply: all 1 billion ARGENI exist from genesis and blockReward is 0, so no coin is
+// Fixed supply: all 500 million ARGENI exist from genesis and blockReward is 0, so no coin is
 // ever minted; validators earn transaction fees. How the supply is split (team, ecosystem,
 // sale, reserve) is still to be decided; on devnet it sits in one treasury key plus the faucet.
 const genesis = {
@@ -61,8 +61,8 @@ console.log(`devnet created in ${root}
 chain id   ${genesis.chainId}
 coin       ${genesis.coin.symbol} (${DECIMALS} decimals)
 validators ${validators.map((v) => v.address).join('\n           ')}
-supply     1,000,000,000 ARGENI, fixed (no minting)
-treasury   ${treasury.address} (999,000,000)
+supply     500,000,000 ARGENI, fixed (no minting)
+treasury   ${treasury.address} (499,000,000)
 faucet     ${faucet.address} (1,000,000, served by node 1)
 
 Start it with: npm run devnet`);

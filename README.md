@@ -1,7 +1,7 @@
 # Argeni chain
 
 The Argeni blockchain, built from scratch in Node.js with no dependencies.
-Native coin: **ARGENI** (18 decimals), fixed supply of **1,000,000,000**.
+Native coin: **ARGENI** (18 decimals), fixed supply of **500,000,000**.
 Status: **devnet / testnet only**, not for real value.
 
 ## Quick start
@@ -44,7 +44,7 @@ Public testnet: see [deploy/DEPLOY.md](deploy/DEPLOY.md) (DigitalOcean + GoDaddy
 | Transactions | Signed transfers with amount, fee, nonce and optional memo, plus `pq-commit` and `migrate`. Nonce prevents replay; chainId prevents cross-chain replay. |
 | Blocks | Header with height, timestamp, previous hash, Merkle root of transactions, state root and proposer, plus a commit certificate: precommit signatures from more than two thirds of validators. |
 | Consensus | BFT, following the Tendermint algorithm (`src/consensus.js`): propose, prevote, precommit, with locking and round changes. Blocks are final once committed; no reorgs. With n validators it tolerates f = floor((n-1)/3) faulty or offline ones (4 validators tolerate 1). Below quorum the chain pauses rather than forks. |
-| Supply | `maxSupply` is enforced: genesis allocations cannot exceed it and minting stops at it. Devnet: all 1,000,000,000 ARGENI exist at genesis (999M treasury, 1M faucet), `blockReward` 0. |
+| Supply | `maxSupply` is enforced: genesis allocations cannot exceed it and minting stops at it. Devnet: all 500,000,000 ARGENI exist at genesis (499M treasury, 1M faucet), `blockReward` 0. |
 | Fees | Fees go to the block proposer. |
 | Idle chain | With `emptyBlockIntervalMs` in genesis, validators wait for transactions instead of making an empty block every `blockTimeMs`, with a heartbeat block at that interval. |
 | Public-node limits | Node config `trustProxy`, `faucetAddressCooldownMs`, `faucetIpCooldownMs`, `txsPerMinutePerIp`. |
@@ -71,7 +71,7 @@ blocks to different validators. The suite passed 16 runs in a row.
 - **Smart contracts.** Only ARGENI transfers exist.
 - **Peer authentication, rate limiting and DoS protection** on the HTTP API.
 - **Efficient storage.** State is in memory and rebuilt on start; the state root is recomputed in full each block.
-- **Tokenomics.** Supply is fixed at 1 billion; how it is split (team, ecosystem, sale, reserve, vesting) and the mainnet fee level are not decided.
+- **Tokenomics.** Supply is fixed at 500 million; how it is split (team, ecosystem, sale, reserve, vesting) and the mainnet fee level are not decided.
 - **Independent security audit.**
 
 Do not sell ARGENI, give it out for value, or launch a public mainnet until the legal checklist
