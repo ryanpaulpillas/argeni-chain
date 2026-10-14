@@ -257,7 +257,7 @@ export class Node {
     const { chain } = this;
     const { decimals } = chain.genesis.coin;
     if (parts.length === 0) {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' }); // always the current explorer
       return res.end(fs.readFileSync(EXPLORER_HTML));
     }
     if (parts[0] === 'status' && parts.length === 1) {
