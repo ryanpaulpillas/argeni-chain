@@ -104,6 +104,16 @@ test('multisig, vesting and staking work from the command line; a new validator 
     // Leaving: out of the set, stake on its way back.
     await cli('stake', 'leave', '--key', file('owner.json'), '--validator', operator.address);
     await waitFor(async () => (await fetchJson(`${urls[0]}/validators`)).active === 4);
+
+    // Delegated stake from the command line. The operator signs a request offline; the provider sends
+    // another payment in between (its nonce moves on), and the request still goes through.
+    const opValidator = keyFile('op-validator.json');
+    const opAccount = addressFromPublicKey(generateKeyPair().publicKey);
+    await cli('stake', 'request', '--validator-key', file('op-validator.json'), '--operator', opAccount, '--amount', '1000', '--out', file('request.json'));
+    assert.ok(!fs.readFileSync(file('request.json'), 'utf8').includes('privateKey'), 'the request holds no private key');
+    await cli('send', '--key', file('owner.json'), '--to', opAccount, '--amount', '1');
+    assert.match(await cli('stake', 'delegate', '--key', file('owner.json'), '--request', file('request.json')), /joins with delegated stake/);
+    await waitFor(async () => (await fetchJson(`${urls[0]}/validators`)).validators.some((v) => v.address === opValidator.address && v.operator === opAccount && v.status === 'active'));
   } finally {
     await joiner?.stop();
     await Promise.all(nodes.map((n) => n.stop()));

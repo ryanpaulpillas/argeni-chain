@@ -5,7 +5,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { generateKeyPair, addressFromPublicKey, publicKeyFromPrivate, keyTypeOf, sign, multisigKey, parseMultisig, signMultisigPart, combineMultisig, KEY_TYPES, PQ_KEY_TYPES, DEFAULT_KEY_TYPE } from './crypto.js';
-import { createTransfer, createMigration, createMigrationCommit, createTx, signingBytes } from './tx.js';
+import { createTransfer, createMigration, createMigrationCommit, createTx, signingBytes, validatorConsentBytes } from './tx.js';
 import { formatAmount, parseAmount } from './coin.js';
 import { writeKeyFile, readKeyFile, loadSigningKey, choosePassphrase, encryptKeyFile, decryptKeyFile, isEncrypted, askPassphrase } from './keyfile.js';
 import { Node, fetchJson } from './node.js';
@@ -53,11 +53,12 @@ Staking (validators)
   stake join --key <owner key> --validator-key <file> --amount <ARGENI>
                                               bond ARGENI and add a validator (its key signs too)
   stake add --key <owner key> --validator <address> --amount <ARGENI>
-  stake delegate --key <stake provider key> --validator-pubkey <file> --operator <address> --amount <ARGENI> --out <offer.json>
-                                              lend stake to an operator: they run the validator and earn
-                                              its rewards; the stake comes back to you when it leaves
-  stake accept --offer <offer.json> --validator-key <file>
-                                              (operator) countersign a stake offer and submit it
+  stake request --validator-key <file> --operator <address> --amount <ARGENI> --out <request.json>
+                                              (operator) ask for delegated stake: signed by the validator
+                                              key, safe to send to the stake provider
+  stake delegate --key <stake provider key> --request <request.json>
+                                              (provider) lend the stake: the operator runs the validator
+                                              and earns its rewards; the stake returns when it leaves
   export-pubkey --key <file> --out <file>     write only the public part of a key file (safe to share)
   stake leave --key <owner key> --validator <address>
                                               leave the set; the stake returns after unbonding
@@ -84,12 +85,13 @@ const months = (v, name) => {
 };
 
 // Signs and sends a transaction of any type from a (possibly passphrase-protected) key file.
-async function signAndSend(rpc, keyFile, { extraSigners, ...fields }) {
+async function signAndSend(rpc, keyFile, { extraSigners, attach = {}, ...fields }) {
   const genesis = await fetchJson(`${rpc}/genesis`);
   const key = await loadSigningKey(keyFile);
   if (!key.privateKey) throw new Error(`${keyFile} is a multisig vault; use "argeni multisig propose"`);
   const account = await fetchJson(`${rpc}/accounts/${addressFromPublicKey(key.publicKey)}`);
-  const tx = createTx({ chainId: genesis.chainId, fee: BigInt(genesis.minFee), nonce: account.pendingNonce, ...fields }, { privateKey: key.privateKey, extraSigners });
+  // `attach`: signatures made by others (e.g. an operator's validator consent), added after signing.
+  const tx = { ...createTx({ chainId: genesis.chainId, fee: BigInt(genesis.minFee), nonce: account.pendingNonce, ...fields }, { privateKey: key.privateKey, extraSigners }), ...attach };
   const { hash } = await postTx(rpc, tx);
   return { tx, hash, genesis };
 }
@@ -129,7 +131,7 @@ async function main(argv) {
       'validator-key': { type: 'string' },
       'validator-pubkey': { type: 'string' },
       operator: { type: 'string' },
-      offer: { type: 'string' },
+      request: { type: 'string' },
     },
   });
   const rpc = values.rpc.replace(/\/$/, '');
@@ -373,15 +375,14 @@ tx ${hash}`);
     }
     case 'stake': {
       const sub = positionals[0];
-      if (sub === 'accept') {
-        if (!values.offer || !values['validator-key']) throw new Error('--offer and --validator-key are required');
-        const offer = JSON.parse(fs.readFileSync(values.offer, 'utf8'));
+      if (sub === 'request') {
+        if (!values['validator-key'] || !values.operator || !values.amount || !values.out) throw new Error('--validator-key, --operator, --amount and --out are required');
         const vkey = await loadSigningKey(values['validator-key']);
-        if (offer.type !== 'validator-join' || offer.validator !== vkey.publicKey) throw new Error('this offer is not for your validator key');
-        const { coin } = await fetchJson(`${rpc}/status`);
-        console.log(`accepting ${formatAmount(offer.amount, coin.decimals)} ${coin.symbol} of stake from ${addressFromPublicKey(offer.from)}; rewards go to ${offer.operator}`);
-        const { hash } = await postTx(rpc, { ...offer, validatorSignature: sign(signingBytes(offer), vkey.privateKey) });
-        console.log(`validator ${addressFromPublicKey(vkey.publicKey)} joins\nRun its node now: from the next block on it must sign.\ntx ${hash}`);
+        const { chainId, coin } = await fetchJson(`${rpc}/status`);
+        const request = { chainId, validator: vkey.publicKey, operator: values.operator, amount: parseAmount(values.amount, coin.decimals).toString() };
+        if (fs.existsSync(values.out)) throw new Error(`${values.out} already exists`);
+        fs.writeFileSync(values.out, `${JSON.stringify({ ...request, validatorSignature: sign(validatorConsentBytes(request), vkey.privateKey) }, null, 2)}\n`);
+        console.log(`wrote ${values.out}: request for ${values.amount} ${coin.symbol} of stake for validator ${addressFromPublicKey(vkey.publicKey)}, rewards to ${values.operator}\nIt holds no private key. Send it to the stake provider; they finish with: argeni stake delegate --key <their key> --request ${values.out}`);
         return;
       }
       if (!values.key) throw new Error('--key (the owner account) is required');
@@ -394,18 +395,16 @@ tx ${hash}`);
         return;
       }
       if (sub === 'delegate') {
-        if (!values['validator-pubkey'] || !values.operator || !values.amount || !values.out) throw new Error('--validator-pubkey, --operator, --amount and --out are required');
-        const { publicKey: validator } = readKeyFile(values['validator-pubkey']);
-        const genesis = await fetchJson(`${rpc}/genesis`);
-        const key = await loadSigningKey(values.key);
-        const account = await fetchJson(`${rpc}/accounts/${addressFromPublicKey(key.publicKey)}`);
-        const tx = createTx({ type: 'validator-join', chainId: genesis.chainId, validator, operator: values.operator, amount: parseAmount(values.amount, coin.decimals), fee: BigInt(genesis.minFee), nonce: account.pendingNonce }, { privateKey: key.privateKey });
-        if (fs.existsSync(values.out)) throw new Error(`${values.out} already exists`);
-        fs.writeFileSync(values.out, `${JSON.stringify(tx, null, 2)}\n`);
-        console.log(`wrote ${values.out}: ${values.amount} ${coin.symbol} of stake for validator ${addressFromPublicKey(validator)}, run and earned by ${values.operator}\nSend it to the operator; they finish with: argeni stake accept --offer ${values.out} --validator-key <their validator key>`);
+        if (!values.request) throw new Error('--request is required (made by the operator with "argeni stake request")');
+        const request = JSON.parse(fs.readFileSync(values.request, 'utf8'));
+        const { chainId } = await fetchJson(`${rpc}/status`);
+        if (request.chainId !== chainId) throw new Error(`this request is for ${request.chainId}, not ${chainId}`);
+        console.log(`lending ${formatAmount(request.amount, coin.decimals)} ${coin.symbol} to validator ${addressFromPublicKey(request.validator)}; rewards go to ${request.operator}`);
+        const { hash } = await signAndSend(rpc, values.key, { type: 'validator-join', validator: request.validator, operator: request.operator, amount: BigInt(request.amount), attach: { validatorSignature: request.validatorSignature } });
+        console.log(`validator ${addressFromPublicKey(request.validator)} joins with delegated stake\nThe operator must run its node now: from the next block on it must sign.\ntx ${hash}`);
         return;
       }
-      if (!['add', 'leave', 'unjail'].includes(sub)) throw new Error('use: stake join | delegate | accept | add | leave | unjail');
+      if (!['add', 'leave', 'unjail'].includes(sub)) throw new Error('use: stake join | request | delegate | add | leave | unjail');
       if (!values.validator) throw new Error('--validator <address> is required');
       const validator = await validatorKeyByAddress(rpc, values.validator);
       const type = { add: 'validator-bond', leave: 'validator-leave', unjail: 'validator-unjail' }[sub];

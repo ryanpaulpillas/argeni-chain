@@ -88,8 +88,17 @@ export function createTx(fields, { privateKey, extraSigners = {} } = {}) {
   for (const k of ['fee', 'amount', 'atStart']) if (body[k] !== undefined) body[k] = body[k].toString();
   const bytes = canonical(body);
   const tx = { ...body, ...(privateKey ? { signature: sign(bytes, privateKey) } : {}) };
-  for (const [field, key] of Object.entries(extraSigners)) tx[field] = sign(bytes, key);
+  for (const [field, key] of Object.entries(extraSigners)) {
+    tx[field] = sign(field === 'validatorSignature' && body.type === 'validator-join' ? validatorConsentBytes(body) : bytes, key);
+  }
   return tx;
+}
+
+// What a validator key signs to agree to join: not the provider's nonce or fee, so a stake request
+// made offline by an operator stays valid until the provider submits it. It cannot be reused: a
+// validator key can be registered only once.
+export function validatorConsentBytes({ chainId, validator, operator, amount }) {
+  return canonical({ purpose: 'argeni-validator-join:v1', chainId, validator, operator: operator ?? null, amount: String(amount) });
 }
 
 // The bytes every signer of a transaction signs (also each member of a multisig).
@@ -168,7 +177,7 @@ export function checkTx(tx, { chainId, minFee }, { voteBytes } = {}) {
       if (!PQ_KEY_TYPES.includes(keyTypeOf(tx.validator)) || !isPublicKey(tx.validator)) return 'validator must be a post-quantum public key';
       if (!positive(tx.amount)) return 'amount must be a positive base-unit integer string';
       if (tx.operator !== undefined && !isAddress(tx.operator)) return 'operator must be an Argeni address';
-      if (!verify(bytes, tx.validatorSignature, tx.validator)) return 'invalid validator signature (the validator key must sign too)';
+      if (!verify(validatorConsentBytes(tx), tx.validatorSignature, tx.validator)) return 'invalid validator signature (the validator key must sign too)';
       break;
     case 'validator-bond':
       if (!positive(tx.amount)) return 'amount must be a positive base-unit integer string';
