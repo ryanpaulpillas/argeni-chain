@@ -39,6 +39,7 @@ export class Node {
     // Peer discovery: a node with a publicUrl announces it to its peers on start, so a new validator
     // joins the gossip without anyone editing other nodes' configs.
     this.relayed = new Set(); // consensus messages already passed on
+    this.announced = new Set(); // peers that joined by announcing themselves (not in our config)
     // Encrypted peer links (p2p.js): ML-KEM-768 key exchange, ML-DSA identities, AES-256-GCM.
     // A validator's identity is its validator key; any other node uses a fresh ML-DSA-65 key.
     this.encryptPeers = encryptPeers;
@@ -87,7 +88,7 @@ export class Node {
         chain: this.chain,
         privateKey: this.validatorKey,
         broadcast: (msg) => this.#broadcast('/consensus', msg),
-        onDecide: (block) => this.#broadcast('/blocks', block),
+        // A finalized block already travels in the consensus 'commit' message; no second copy.
         onEquivocation: (a, b) => this.#reportDoubleSign(a, b),
         log: this.log,
       });
@@ -214,6 +215,15 @@ export class Node {
     for (const peer of this.peers) this.#peerCall(peer, 'POST', route, body).catch(() => {});
   }
 
+  // Passes on a message received from a peer, only where it is needed: the configured validators
+  // reach each other directly, so messages between them go on only to peers that joined by
+  // announcing themselves, and messages from those go on to everyone else.
+  #relay(route, body, fromKey) {
+    const fromAnnounced = [...this.announced].some((url) => this.pinnedPeers.get(url) === fromKey);
+    const targets = fromAnnounced ? this.peers.filter((url) => this.pinnedPeers.get(url) !== fromKey) : [...this.announced];
+    for (const peer of targets) this.#peerCall(peer, 'POST', route, body).catch(() => {});
+  }
+
   // ---- encrypted peer channel (see p2p.js) ----
 
   // One request to a peer over the encrypted channel; returns the decrypted response body.
@@ -288,7 +298,7 @@ export class Node {
     try {
       if (request.method === 'GET' && inner.length === 1 && inner[0] === 'network') send(out, 200, await this.#network());
       else if (request.method === 'GET' && inner.length) this.#get(inner, out, url.searchParams);
-      else if (request.method === 'POST') await this.#post(inner, request.body, out, null, { fromPeer: true });
+      else if (request.method === 'POST') await this.#post(inner, request.body, out, null, { fromPeer: true, peerKey: session.peerKey });
       else send(out, 404, { error: 'not found' });
     } catch (err) {
       send(out, err.status ?? 500, { error: err.status ? err.message : 'internal error' });
@@ -387,6 +397,7 @@ export class Node {
           publicKey: v.key,
           keyType: keyTypeOf(v.key),
           owner: v.owner,
+          operator: v.operator ?? null,
           stake: v.stake.toString(),
           stakeFormatted: `${formatAmount(v.stake, decimals)} ${symbol}`,
           status: v.status,
@@ -396,6 +407,11 @@ export class Node {
           unbondAt: v.unbondAt ?? null,
         })),
         banned: [...chain.state.banned].map(addressFromPublicKey),
+        rewards: chain.genesis.rewards ? {
+          poolLeft: chain.state.rewardPool.toString(), paid: chain.state.rewardsPaid.toString(),
+          poolLeftFormatted: `${formatAmount(chain.state.rewardPool, decimals)} ${symbol}`, paidFormatted: `${formatAmount(chain.state.rewardsPaid, decimals)} ${symbol}`,
+          perYear: chain.genesis.rewards.years.map((y) => `${formatAmount(y, decimals)} ${symbol}`),
+        } : null,
       });
     }
     if (parts[0] === 'blocks' && parts.length === 1) {
@@ -475,7 +491,7 @@ export class Node {
     return remote;
   }
 
-  #post(parts, body, res, ip, { fromPeer = false } = {}) {
+  #post(parts, body, res, ip, { fromPeer = false, peerKey = null } = {}) {
     const { chain } = this;
     // Gossip between nodes only over the encrypted channel; wallets still send transactions directly.
     if (this.encryptPeers && !fromPeer && ['blocks', 'consensus', 'peers'].includes(parts[0])) {
@@ -499,7 +515,7 @@ export class Node {
       const result = chain.addBlock(body);
       if (!result.ok) return send(res, 400, { error: result.error });
       this.log(`accepted finalized block ${height} (${body.txs.length} txs) from peer`);
-      this.#broadcast('/blocks', body);
+      this.#relay('/blocks', body, peerKey);
       return send(res, 200, { ok: true });
     }
     if (parts[0] === 'consensus' && parts.length === 1) {
@@ -514,7 +530,7 @@ export class Node {
       if (id) {
         this.relayed.add(id);
         if (this.relayed.size > 20_000) this.relayed.delete(this.relayed.values().next().value);
-        this.#broadcast('/consensus', body);
+        this.#relay('/consensus', body, peerKey);
       }
       return send(res, 200, { ok: true });
     }
@@ -532,6 +548,7 @@ export class Node {
       if (peer === this.publicUrl || peer === this.url || this.peers.includes(peer)) return send(res, 200, { ok: true, known: true });
       if (this.peers.length >= MAX_PEERS) return send(res, 503, { error: 'peer list full' });
       this.peers.push(peer);
+      this.announced.add(peer);
       this.log(`new peer ${peer}`);
       return send(res, 200, { ok: true });
     }
@@ -687,7 +704,7 @@ function readJson(req) {
   });
 }
 
-export async function fetchJson(url, { timeoutMs = 5_000, ...options } = {}) {
+export async function fetchJson(url, { timeoutMs = 15_000, ...options } = {}) {
   const res = await fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
   const body = await res.json();
   if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);

@@ -27,7 +27,9 @@ const FIELDS = {
   vest: [...ENVELOPE, 'to', 'amount', 'atStart', 'lockMonths', 'vestMonths', 'memo'],
   // Staking: an owner account bonds ARGENI to a consensus key, which then joins the validator set.
   // Signed by the owner AND the validator key (proves the operator holds it).
-  'validator-join': [...ENVELOPE, 'validator', 'amount', 'validatorSignature'],
+  // With `operator`, the stake is delegated: the signer provides it, the operator runs the validator
+  // and earns its fees and rewards; the stake returns to the signer when the validator leaves.
+  'validator-join': [...ENVELOPE, 'validator', 'amount', 'operator', 'validatorSignature'],
   'validator-bond': [...ENVELOPE, 'validator', 'amount'],
   'validator-leave': [...ENVELOPE, 'validator'],
   'validator-unjail': [...ENVELOPE, 'validator'],
@@ -165,6 +167,7 @@ export function checkTx(tx, { chainId, minFee }, { voteBytes } = {}) {
     case 'validator-join':
       if (!PQ_KEY_TYPES.includes(keyTypeOf(tx.validator)) || !isPublicKey(tx.validator)) return 'validator must be a post-quantum public key';
       if (!positive(tx.amount)) return 'amount must be a positive base-unit integer string';
+      if (tx.operator !== undefined && !isAddress(tx.operator)) return 'operator must be an Argeni address';
       if (!verify(bytes, tx.validatorSignature, tx.validator)) return 'invalid validator signature (the validator key must sign too)';
       break;
     case 'validator-bond':

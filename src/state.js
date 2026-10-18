@@ -16,6 +16,22 @@ import { migrationCommitment } from './tx.js';
 export const MONTH_MS = 2_629_746_000;
 const DAY_MS = 86_400_000;
 export const MAX_GRANTS = 16;
+const YEAR_MS = 12 * MONTH_MS;
+
+// Validator rewards: genesis.rewards = { years: [units for year 1, year 2, ...], start? }. The pool is
+// part of the fixed supply from genesis; it is released linearly within each year (front-loaded by
+// making early years larger) and paid every block to the validators whose signatures the block carries.
+export function rewardsReleased(rewards, t, genesisTimestamp) {
+  if (!rewards) return 0n;
+  const elapsed = Math.max(0, t - (rewards.start ?? genesisTimestamp));
+  let released = 0n;
+  rewards.years.forEach((amount, i) => {
+    const into = elapsed - i * YEAR_MS;
+    if (into >= YEAR_MS) released += BigInt(amount);
+    else if (into > 0) released += (BigInt(amount) * BigInt(into)) / BigInt(YEAR_MS);
+  });
+  return released;
+}
 
 // Staking and penalty settings: genesis.staking overrides any of these.
 export function stakingParams(genesis) {
@@ -78,11 +94,13 @@ export function migrationError(account, tx, { height, retiredAt = () => undefine
 }
 
 export class State {
-  constructor(accounts = new Map(), supply = 0n, validators = [], banned = new Set()) {
+  constructor(accounts = new Map(), supply = 0n, validators = [], banned = new Set(), rewardPool = 0n, rewardsPaid = 0n) {
     this.accounts = accounts;
     this.supply = supply;
     this.validators = validators;
     this.banned = banned;
+    this.rewardPool = rewardPool; // validator rewards not yet paid out (counted in supply)
+    this.rewardsPaid = rewardsPaid;
   }
 
   static fromGenesis(genesis) {
@@ -96,13 +114,17 @@ export class State {
       state.accounts.set(address, { ...account, vesting: grants.map((g) => normalizeGrant(g, genesis.timestamp)) });
     }
     state.validators = genesis.validators.map((key) => ({ key, owner: addressFromPublicKey(key), stake: 0n, status: 'active', missed: 0, genesis: true }));
+    if (genesis.rewards) {
+      state.rewardPool = genesis.rewards.years.reduce((sum, a) => sum + BigInt(a), 0n);
+      state.supply += state.rewardPool;
+    }
     return state;
   }
 
   clone() {
     const copy = new Map();
     for (const [address, account] of this.accounts) copy.set(address, { ...account });
-    return new State(copy, this.supply, this.validators.map((v) => ({ ...v })), new Set(this.banned));
+    return new State(copy, this.supply, this.validators.map((v) => ({ ...v })), new Set(this.banned), this.rewardPool, this.rewardsPaid);
   }
 
   get(address) {
@@ -141,9 +163,25 @@ export class State {
     return this.validators.find((v) => v.key === key) ?? null;
   }
 
-  // Where a block proposer's fees and rewards go: its owner account.
-  rewardAddress(proposerKey) {
-    return this.validator(proposerKey)?.owner ?? addressFromPublicKey(proposerKey);
+  // Where a validator's fees and rewards go: its operator if the stake was delegated, else its owner.
+  rewardAddress(validatorKey) {
+    const v = this.validator(validatorKey);
+    return v ? v.operator ?? v.owner : addressFromPublicKey(validatorKey);
+  }
+
+  // Pays the validator rewards released up to this block, in equal shares, to the validators whose
+  // signatures for the previous block this block carries (so being online is what earns).
+  #payRewards(ctx, signers) {
+    if (!ctx.rewards || !signers?.size) return;
+    const due = rewardsReleased(ctx.rewards, ctx.timestamp, ctx.genesisTimestamp) - this.rewardsPaid;
+    const eligible = [...signers].filter((k) => !this.banned.has(k));
+    if (due <= 0n || !eligible.length) return;
+    const share = (due < this.rewardPool ? due : this.rewardPool) / BigInt(eligible.length);
+    if (share === 0n) return;
+    for (const key of eligible) this.credit(this.rewardAddress(key), share);
+    const paid = share * BigInt(eligible.length);
+    this.rewardPool -= paid;
+    this.rewardsPaid += paid;
   }
 
   #slash(v, bps) {
@@ -170,6 +208,7 @@ export class State {
         }
       }
     }
+    this.#payRewards(ctx, signers);
     for (const v of this.validators.filter((x) => x.status === 'unbonding' && ctx.timestamp >= x.unbondAt)) {
       this.credit(v.owner, v.stake);
       this.validators.splice(this.validators.indexOf(v), 1);
@@ -195,10 +234,11 @@ export class State {
       this.accounts.set(from, { ...now, balance: now.balance - amount - fee, nonce: now.nonce + 1 });
       this.credit(ctx.rewardAddress, fee);
     };
-    const owned = () => {
+    // The owner (who staked) controls a validator; with delegated stake, so does its operator.
+    const owned = ({ operatorToo = false } = {}) => {
       const v = this.validator(tx.validator);
       if (!v) throw new Error('unknown validator');
-      if (v.owner !== from) throw new Error('only the validator\'s owner account can do this');
+      if (v.owner !== from && !(operatorToo && v.operator === from)) throw new Error(`only the validator's ${operatorToo ? 'owner or operator' : 'owner'} account can do this`);
       return v;
     };
     const p = ctx.params;
@@ -221,7 +261,10 @@ export class State {
         this.accounts.set(from, { balance: 0n, nonce: sender.nonce + 1, migratedTo: target });
         this.accounts.set(target, { ...dest, balance: dest.balance + sender.balance - fee, ...(grants.length ? { vesting: grants } : {}) });
         this.credit(ctx.rewardAddress, fee);
-        for (const v of this.validators) if (v.owner === from) v.owner = target; // validator ownership moves too
+        for (const v of this.validators) { // validator ownership and operation move too
+          if (v.owner === from) v.owner = target;
+          if (v.operator === from) v.operator = target;
+        }
         return;
       }
 
@@ -247,8 +290,9 @@ export class State {
         if (this.validator(tx.validator)) throw new Error('this validator key is already registered');
         if (amount < p.minStake) throw new Error(`stake must be at least ${p.minStake} base units`);
         if (this.activeValidators().length >= p.maxValidators) throw new Error('the validator set is full');
+        if (tx.operator && this.get(tx.operator).migratedTo) throw new Error('the operator account was migrated; use its new address');
         spend(amount);
-        this.validators.push({ key: tx.validator, owner: from, stake: amount, status: 'active', missed: 0 });
+        this.validators.push({ key: tx.validator, owner: from, ...(tx.operator && tx.operator !== from ? { operator: tx.operator } : {}), stake: amount, status: 'active', missed: 0 });
         return;
       }
 
@@ -261,7 +305,7 @@ export class State {
       }
 
       case 'validator-leave': {
-        const v = owned();
+        const v = owned({ operatorToo: true });
         if (v.status === 'unbonding') throw new Error('this validator is already leaving');
         if (v.status === 'active' && this.activeValidators().length <= p.minValidators) throw new Error(`the network needs at least ${p.minValidators} validators`);
         spend(0n);
@@ -271,7 +315,7 @@ export class State {
       }
 
       case 'validator-unjail': {
-        const v = owned();
+        const v = owned({ operatorToo: true });
         if (v.status !== 'jailed') throw new Error('this validator is not jailed');
         if (t < v.jailedUntil) throw new Error(`jailed until ${new Date(v.jailedUntil).toISOString()}`);
         if (!v.genesis && v.stake < p.minStake) throw new Error('stake is below the minimum; add stake with validator-bond first');
@@ -313,8 +357,11 @@ export class State {
         if (vesting?.length) entry.push({ vesting });
         return entry;
       });
-    const validators = this.validators.map((v) => [sha256(v.key), v.owner, v.stake.toString(), v.status, v.missed, v.jailedUntil ?? null, v.unbondAt ?? null, Boolean(v.genesis)]);
-    return hashObject({ supply: this.supply.toString(), accounts: entries, validators, banned: [...this.banned].map((k) => sha256(k)).sort() });
+    const validators = this.validators.map((v) => [sha256(v.key), v.owner, v.operator ?? null, v.stake.toString(), v.status, v.missed, v.jailedUntil ?? null, v.unbondAt ?? null, Boolean(v.genesis)]);
+    return hashObject({
+      supply: this.supply.toString(), accounts: entries, validators, banned: [...this.banned].map((k) => sha256(k)).sort(),
+      rewards: [this.rewardPool.toString(), this.rewardsPaid.toString()],
+    });
   }
 
   // Plain-JSON copy (for snapshots) and back.
@@ -324,6 +371,8 @@ export class State {
       accounts: [...this.accounts].map(([a, acc]) => [a, { ...acc, balance: acc.balance.toString() }]),
       validators: this.validators.map((v) => ({ ...v, stake: v.stake.toString() })),
       banned: [...this.banned],
+      rewardPool: this.rewardPool.toString(),
+      rewardsPaid: this.rewardsPaid.toString(),
     };
   }
 
@@ -333,6 +382,8 @@ export class State {
       BigInt(json.supply),
       json.validators.map((v) => ({ ...v, stake: BigInt(v.stake) })),
       new Set(json.banned),
+      BigInt(json.rewardPool ?? '0'),
+      BigInt(json.rewardsPaid ?? '0'),
     );
   }
 }

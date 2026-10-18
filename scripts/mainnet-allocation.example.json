@@ -1,0 +1,15 @@
+{
+  "_comment": "Example only. Replace every address with a real vault address created offline (multisig for treasury, ecosystem, public distribution and team pool; SLH-DSA-256s vaults for founders). Founder amounts are whole ARGENI and must add up to 40000000.",
+  "chainId": "argeni-1",
+  "launch": 1800000000000,
+  "validators": ["<validator 1 public key>", "<validator 2 public key>", "<validator 3 public key>", "<validator 4 public key>"],
+  "addresses": {
+    "ecosystem": "ag<64 hex>",
+    "treasury": "ag<64 hex>",
+    "publicDistribution": "ag<64 hex>",
+    "partners": "ag<64 hex>",
+    "teamPool": "ag<64 hex>",
+    "liquidity": "ag<64 hex>",
+    "founders": { "ag<founder 1 address>": "40000000" }
+  }
+}

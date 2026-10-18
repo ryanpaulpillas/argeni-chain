@@ -331,3 +331,78 @@ test('genesis rejects malformed vesting and staking settings', () => {
   assert.throws(() => new Chain({ ...ctx.genesis, validators: [multisigKey(2, [generateKeyPair('ml-dsa-65').publicKey, generateKeyPair('ml-dsa-65').publicKey]), ...ctx.genesis.validators] }), /single key/);
   assert.equal(quorum(5), 4);
 });
+
+test('the validator reward pool pays the validators that signed, front-loaded by year, within the fixed supply', () => {
+  const ctx = setup({});
+  ctx.chain = new Chain({ ...ctx.genesis, rewards: { years: [(1200n * ONE).toString(), (600n * ONE).toString()] } }, { now: () => ctx.clock.t });
+  const supply = ctx.chain.state.supply;
+  assert.equal(ctx.chain.state.rewardPool, 1800n * ONE, 'the pool is part of the supply from genesis');
+  const owner = (k) => addressFromPublicKey(k.publicKey);
+  finalize(ctx, { skip: [ctx.keys[3].publicKey] });
+  // One month later: year 1 releases 1200 / 12 = 100 ARGENI a month. Validator 4 stays silent.
+  ctx.clock.t = ctx.genesis.timestamp + MONTH_MS;
+  finalize(ctx, { advance: 0, skip: [ctx.keys[3].publicKey] });
+  finalize(ctx, { skip: [ctx.keys[3].publicKey] }); // carries the signatures (3 of 4) for the block above
+  const paid = ctx.chain.state.rewardsPaid;
+  assert.ok(paid > 99n * ONE && paid < 100n * ONE + ONE / 1000n, `about a month of year-1 rewards paid (${paid})`); // + a few seconds
+  const shares = ctx.keys.map((k) => ctx.chain.state.get(owner(k)).balance);
+  assert.equal(shares[3], 0n, 'a validator that did not sign earns nothing for that block');
+  assert.ok(shares[0] > 0n && shares[0] === shares[1] && shares[1] === shares[2], 'signers share equally');
+  assert.equal(ctx.chain.state.supply, supply, 'paying rewards never creates coins');
+  // Year 2 is smaller: after 18 months, 1200 + 300 have been released.
+  ctx.clock.t = ctx.genesis.timestamp + 18 * MONTH_MS;
+  finalize(ctx, { advance: 0 });
+  finalize(ctx);
+  assert.ok(ctx.chain.state.rewardsPaid > 1499n * ONE && ctx.chain.state.rewardsPaid < 1500n * ONE + ONE / 1000n);
+  assert.equal(ctx.chain.state.rewardPool + ctx.chain.state.rewardsPaid, 1800n * ONE);
+});
+
+test('delegated stake: the operator runs the validator and earns; the stake returns to the provider', () => {
+  const ctx = setup({ staking: { unbondingMs: DAY } });
+  ctx.chain = new Chain({ ...ctx.genesis, rewards: { years: [(1200n * ONE).toString()] } }, { now: () => ctx.clock.t });
+  const operatorAccount = generateKeyPair('ml-dsa-65');
+  const operatorAddr = addressFromPublicKey(operatorAccount.publicKey);
+  const vkey = generateKeyPair('ml-dsa-87');
+  ctx.byKey.set(vkey.publicKey, vkey);
+  // The provider (e.g. the ecosystem fund) signs the offer; the operator countersigns with the validator key.
+  const offer = createTx({ type: 'validator-join', chainId: ctx.genesis.chainId, validator: vkey.publicKey, operator: operatorAddr, amount: 1000n * ONE, fee: FEE, nonce: 0 }, { privateKey: ctx.alice.privateKey });
+  submit(ctx, { ...offer, validatorSignature: sign(signingBytes(offer), vkey.privateKey) });
+  finalize(ctx);
+  assert.equal(ctx.chain.state.validator(vkey.publicKey).operator, operatorAddr);
+  ctx.clock.t = ctx.genesis.timestamp + MONTH_MS;
+  for (let i = 0; i < 6; i++) finalize(ctx, { advance: i ? 1000 : 0 });
+  assert.ok(ctx.chain.state.get(operatorAddr).balance > 0n, 'rewards and fees go to the operator');
+  const aliceBefore = ctx.chain.state.get(ctx.aliceAddr).balance;
+
+  // The operator can take the validator out (it needs a little ARGENI for the fee, which it has earned).
+  submit(ctx, createTx({ type: 'validator-leave', chainId: ctx.genesis.chainId, validator: vkey.publicKey, fee: FEE, nonce: 0 }, { privateKey: operatorAccount.privateKey }));
+  finalize(ctx);
+  // Only the provider can add stake.
+  assert.match(ctx.chain.addTx(createTx({ type: 'validator-bond', chainId: ctx.genesis.chainId, validator: vkey.publicKey, amount: ONE, fee: FEE, nonce: 1 }, { privateKey: operatorAccount.privateKey })).error, /owner account/);
+  finalize(ctx, { advance: DAY });
+  assert.equal(ctx.chain.state.get(ctx.aliceAddr).balance, aliceBefore + 1000n * ONE, 'the stake went back to the provider, not the operator');
+});
+
+test('the mainnet genesis builder writes the planned allocation into the chain', async () => {
+  const { buildGenesis, PLAN } = await import('../scripts/mainnet-genesis.js');
+  const addr = () => addressFromPublicKey(generateKeyPair('ml-dsa-65').publicKey);
+  const [f1, f2] = [addr(), addr()];
+  const config = {
+    chainId: 'argeni-1', launch: 1_800_000_000_000, validators: Array.from({ length: 4 }, () => generateKeyPair('ml-dsa-65').publicKey),
+    addresses: { ecosystem: addr(), treasury: addr(), publicDistribution: addr(), partners: addr(), teamPool: addr(), liquidity: addr(), founders: { [f1]: '30000000', [f2]: '10000000' } },
+  };
+  const genesis = buildGenesis(config);
+  const chain = new Chain(genesis, { now: () => genesis.timestamp });
+  assert.equal(chain.state.supply, 500_000_000n * ONE, 'exactly 500,000,000 ARGENI');
+  assert.equal(chain.state.rewardPool, 60_000_000n * ONE);
+  const t0 = genesis.timestamp;
+  const free = (a, t) => chain.state.spendable(a, t);
+  assert.equal(free(config.addresses.ecosystem, t0), 15_000_000n * ONE, 'ecosystem: 10% free at launch');
+  assert.equal(free(config.addresses.treasury, t0 + 5 * MONTH_MS), 0n, 'treasury locked for 6 months');
+  assert.equal(free(f1, t0 + 12 * MONTH_MS), 0n, 'founders locked for 12 months');
+  assert.equal(free(f1, t0 + 13 * MONTH_MS), 1_250_000n * ONE, 'then 1/24 a month');
+  assert.equal(free(f1, t0 + 36 * MONTH_MS), 30_000_000n * ONE, 'fully free after 3 years');
+  assert.equal(free(config.addresses.liquidity, t0), 25_000_000n * ONE);
+  assert.equal(PLAN.validatorRewards.reduce((s, x) => s + x, 0n), 60_000_000n);
+  assert.throws(() => buildGenesis({ ...config, addresses: { ...config.addresses, founders: { [f1]: '30000000' } } }), /add up to 40000000/);
+});

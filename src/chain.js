@@ -51,6 +51,11 @@ export function validateGenesis(genesis) {
       || (st.minStake !== undefined && !isUnits(st.minStake)) || ints.some((k) => st[k] !== undefined && (!Number.isSafeInteger(st[k]) || st[k] < 0))
       || (st.downtimeSlashBps ?? 0) > 10_000 || (st.doubleSignSlashBps ?? 0) > 10_000 || st.maxValidators === 0 || st.downtimeBlocks === 0) errors.push('staking');
   }
+  if (genesis.rewards !== undefined) {
+    const r = genesis.rewards;
+    if (!r || typeof r !== 'object' || !Array.isArray(r.years) || !r.years.length || r.years.length > 20 || !r.years.every(isUnits)
+      || (r.start !== undefined && !Number.isSafeInteger(r.start)) || Object.keys(r).some((k) => k !== 'years' && k !== 'start')) errors.push('rewards (years: amounts per year, optional start)');
+  }
   if (Array.isArray(v) && v.some((k) => keyTypeOf(k) === 'multisig')) errors.push('validators (a validator needs a single key)');
   if (genesis.vesting !== undefined) {
     const ok = typeof genesis.vesting === 'object' && !Array.isArray(genesis.vesting) && Object.entries(genesis.vesting).every(([a, grants]) => {
@@ -66,8 +71,9 @@ export function validateGenesis(genesis) {
   if (!genesis.alloc || !Object.entries(genesis.alloc).every(([a, amt]) => isAddress(a) && isUnits(amt))) {
     errors.push('alloc');
   } else if (isUnits(genesis.maxSupply)) {
-    const total = Object.values(genesis.alloc).reduce((sum, amt) => sum + BigInt(amt), 0n);
-    if (total > BigInt(genesis.maxSupply)) errors.push('alloc exceeds maxSupply');
+    const pool = Array.isArray(genesis.rewards?.years) && genesis.rewards.years.every(isUnits) ? genesis.rewards.years.reduce((sum, amt) => sum + BigInt(amt), 0n) : 0n;
+    const total = Object.values(genesis.alloc).reduce((sum, amt) => sum + BigInt(amt), 0n) + pool;
+    if (total > BigInt(genesis.maxSupply)) errors.push('alloc exceeds maxSupply (counting the validator reward pool)');
   }
   if (errors.length) throw new Error(`invalid genesis: ${errors.join(', ')}`);
 }
@@ -196,7 +202,10 @@ export class Chain {
 
   // Rules context for the block at `height` with `timestamp`.
   ctx(height, timestamp, proposer, state = this.state) {
-    return { height, timestamp, params: this.params, retiredAt: (type) => retiredAt(this.genesis, type), rewardAddress: state.rewardAddress(proposer) };
+    return {
+      height, timestamp, params: this.params, retiredAt: (type) => retiredAt(this.genesis, type), rewardAddress: state.rewardAddress(proposer),
+      rewards: this.genesis.rewards ?? null, genesisTimestamp: this.genesis.timestamp,
+    };
   }
 
   // Inputs to the migration security rules (state.js migrationError) for a block at `height`.
