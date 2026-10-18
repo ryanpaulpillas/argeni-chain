@@ -55,6 +55,8 @@ export class Consensus {
   handle(msg) {
     if (!this.running) return { ok: false, error: 'consensus not running' };
     if (msg?.type === 'commit') return this.#handleCommit(msg);
+    const tip = this.chain.tip;
+    if (msg?.type === 'precommit' && tip && msg.height === tip.header.height && msg.blockHash === tip.hash) return this.#lateSignature(msg);
     const error = this.#check(msg);
     if (error) return { ok: false, error };
     if (msg.height < this.height) return { ok: true };
@@ -64,6 +66,19 @@ export class Consensus {
     }
     this.#store(msg);
     this.#evaluate();
+    return { ok: true };
+  }
+
+  // A valid signature for the latest block that arrived after it was finalized (e.g. from a validator
+  // reached through a relay) is still added to its certificate, so the next block's lastCommit records
+  // the validator as online and it shares in that block's rewards.
+  #lateSignature(msg) {
+    const { tip, tipSigners } = this.chain;
+    const precommits = tip.commit?.precommits;
+    if (!precommits || msg.round !== tip.commit.round || !tipSigners?.includes(msg.validator)) return { ok: true };
+    if (precommits.some((p) => p.validator === msg.validator)) return { ok: true, known: true };
+    if (!verify(voteSignBytes(this.chain.genesis.chainId, msg), msg.signature, msg.validator)) return { ok: false, error: 'invalid signature' };
+    precommits.push({ type: 'precommit', height: msg.height, round: msg.round, blockHash: msg.blockHash, validator: msg.validator, signature: msg.signature });
     return { ok: true };
   }
 
