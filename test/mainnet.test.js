@@ -8,7 +8,7 @@ import path from 'node:path';
 import { Chain, quorum, voteSignBytes } from '../src/chain.js';
 import { Consensus } from '../src/consensus.js';
 import { addressFromPublicKey, generateKeyPair, multisigKey, signMultisigPart, combineMultisig, sign } from '../src/crypto.js';
-import { createTransfer, createTx, signingBytes } from '../src/tx.js';
+import { createTransfer, createTx, signingBytes, validatorConsentBytes } from '../src/tx.js';
 import { MONTH_MS } from '../src/state.js';
 
 const ONE = 10n ** 18n;
@@ -364,9 +364,9 @@ test('delegated stake: the operator runs the validator and earns; the stake retu
   const operatorAddr = addressFromPublicKey(operatorAccount.publicKey);
   const vkey = generateKeyPair('ml-dsa-87');
   ctx.byKey.set(vkey.publicKey, vkey);
-  // The provider (e.g. the ecosystem fund) signs the offer; the operator countersigns with the validator key.
+  // The operator's validator key consents (no nonce involved); the provider (e.g. the ecosystem fund) submits.
   const offer = createTx({ type: 'validator-join', chainId: ctx.genesis.chainId, validator: vkey.publicKey, operator: operatorAddr, amount: 1000n * ONE, fee: FEE, nonce: 0 }, { privateKey: ctx.alice.privateKey });
-  submit(ctx, { ...offer, validatorSignature: sign(signingBytes(offer), vkey.privateKey) });
+  submit(ctx, { ...offer, validatorSignature: sign(validatorConsentBytes(offer), vkey.privateKey) });
   finalize(ctx);
   assert.equal(ctx.chain.state.validator(vkey.publicKey).operator, operatorAddr);
   ctx.clock.t = ctx.genesis.timestamp + MONTH_MS;
@@ -404,5 +404,6 @@ test('the mainnet genesis builder writes the planned allocation into the chain',
   assert.equal(free(f1, t0 + 36 * MONTH_MS), 30_000_000n * ONE, 'fully free after 3 years');
   assert.equal(free(config.addresses.liquidity, t0), 25_000_000n * ONE);
   assert.equal(PLAN.validatorRewards.reduce((s, x) => s + x, 0n), 60_000_000n);
-  assert.throws(() => buildGenesis({ ...config, addresses: { ...config.addresses, founders: { [f1]: '30000000' } } }), /add up to 40000000/);
+  assert.equal(chain.state.get(config.addresses.teamPool).balance, 35_000_000n * ONE, 'team pool = 75M team allocation minus founder vaults');
+  assert.throws(() => buildGenesis({ ...config, addresses: { ...config.addresses, founders: { [f1]: '75000000' } } }), /team pool/);
 });
