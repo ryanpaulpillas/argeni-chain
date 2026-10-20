@@ -169,6 +169,16 @@ the stake and a day out of the set; signing two different blocks costs 5% and a 
 To leave: `node src/cli.js stake leave --key owner.json --validator ag…`. The stake returns after
 14 days.
 
+## Moving or restoring a validator
+
+Each validator keeps `sign-state.json` in its data folder: a record of what it last signed. After a
+restart it repeats those messages instead of signing new ones, which the network would punish as
+double-signing (5% of the stake and a permanent ban). So:
+
+- Never run the same validator key on two servers at once.
+- When moving a validator to a new server, stop the old one first, then copy the key **and**
+  `sign-state.json` together.
+
 ## Before you announce it
 
 - File the **ARGENI trademark** at IPOPHL (the name becomes public the day this goes live).

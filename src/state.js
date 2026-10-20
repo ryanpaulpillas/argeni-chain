@@ -15,7 +15,7 @@ import { migrationCommitment } from './tx.js';
 // Average Gregorian month, so "12 months" means one year of block time.
 export const MONTH_MS = 2_629_746_000;
 const DAY_MS = 86_400_000;
-export const MAX_GRANTS = 16;
+export const MAX_GRANTS = 64;
 const YEAR_MS = 12 * MONTH_MS;
 
 // Validator rewards: genesis.rewards = { years: [units for year 1, year 2, ...], start? }. The pool is
@@ -39,6 +39,7 @@ export function stakingParams(genesis) {
   const p = genesis.staking ?? {};
   return {
     minStake: BigInt(p.minStake ?? (100_000n * one).toString()),
+    minVestAmount: BigInt(p.minVestAmount ?? (100n * one).toString()), // smallest vesting grant (stops grant spam)
     maxValidators: p.maxValidators ?? 100,
     minValidators: p.minValidators ?? Math.min(4, genesis.validators.length),
     unbondingMs: p.unbondingMs ?? 14 * DAY_MS,
@@ -273,6 +274,7 @@ export class State {
         const recipient = this.get(tx.to);
         if (recipient.migratedTo) throw new Error(`recipient migrated to ${recipient.migratedTo}; send there instead`);
         const amount = BigInt(tx.amount);
+        if (tx.type === 'vest' && amount < p.minVestAmount) throw new Error(`a vesting grant must be at least ${p.minVestAmount} base units`);
         if (tx.type === 'vest' && (recipient.vesting?.length ?? 0) >= MAX_GRANTS) throw new Error('the recipient has too many vesting grants');
         spend(amount);
         this.credit(tx.to, amount);

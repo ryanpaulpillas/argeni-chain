@@ -16,8 +16,12 @@ const MAX_FUTURE_MESSAGES = 2_000;
 const VOTE_TYPES = new Set(['prevote', 'precommit']);
 
 export class Consensus {
-  constructor({ chain, privateKey, broadcast, onDecide = () => {}, onEquivocation = () => {}, log = () => {} }) {
+  // signLog: { read(), write(record) } remembers what this validator last signed ({ height, round,
+  // msgs }), so that after a restart it re-sends those messages instead of signing different ones
+  // (which the network would punish as double-signing). Nodes keep it on disk; the default lives in memory.
+  constructor({ chain, privateKey, broadcast, onDecide = () => {}, onEquivocation = () => {}, signLog = memorySignLog(), log = () => {} }) {
     this.chain = chain;
+    this.signLog = signLog;
     this.privateKey = privateKey;
     this.me = publicKeyFromPrivate(privateKey);
     this.broadcast = broadcast;
@@ -128,7 +132,8 @@ export class Consensus {
     const idle = this.chain.genesis.emptyBlockIntervalMs ?? 0;
     const othersStarted = this.proposals.size > 0 || this.votes.prevote.size > 0 || this.votes.precommit.size > 0;
     if (!idle || othersStarted || this.chain.now() - this.chain.tipTimestamp >= idle || this.chain.hasPendingWork()) {
-      this.#startRound(0);
+      const rec = this.signLog.read();
+      this.#startRound(rec && rec.height === this.height ? rec.round : 0); // after a restart, resume where we signed
       return;
     }
     this.#schedule(Math.min(250, this.blockTimeMs), () => this.#waitForWork());
@@ -255,8 +260,17 @@ export class Consensus {
   }
 
   #send(fields) {
-    const msg = { ...fields, validator: this.me };
-    msg.signature = sign(voteSignBytes(this.chain.genesis.chainId, msg), this.privateKey);
+    const { height, round, type } = fields;
+    const rec = this.signLog.read();
+    // Never sign for a step before one already signed; for a step already signed, repeat that message.
+    if (rec && (height < rec.height || (height === rec.height && round < rec.round))) return;
+    let msg = rec && rec.height === height && rec.round === round ? rec.msgs[type] : null;
+    if (!msg) {
+      msg = { ...fields, validator: this.me };
+      msg.signature = sign(voteSignBytes(this.chain.genesis.chainId, msg), this.privateKey);
+      const same = rec && rec.height === height && rec.round === round;
+      this.signLog.write({ height, round, msgs: { ...(same ? rec.msgs : {}), [type]: msg } }); // recorded before it leaves this node
+    }
     this.own.push(msg);
     this.#store(msg);
     this.broadcast(msg);
@@ -364,4 +378,9 @@ export class Consensus {
     for (const timer of this.timers) clearTimeout(timer);
     this.timers.clear();
   }
+}
+
+export function memorySignLog() {
+  let record = null;
+  return { read: () => record, write: (r) => { record = r; } };
 }

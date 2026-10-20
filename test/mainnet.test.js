@@ -407,3 +407,37 @@ test('the mainnet genesis builder writes the planned allocation into the chain',
   assert.equal(chain.state.get(config.addresses.teamPool).balance, 35_000_000n * ONE, 'team pool = 75M team allocation minus founder vaults');
   assert.throws(() => buildGenesis({ ...config, addresses: { ...config.addresses, founders: { [f1]: '75000000' } } }), /team pool/);
 });
+
+test('a validator that restarts mid-round repeats what it signed instead of double-signing', async () => {
+  const { memorySignLog } = await import('../src/consensus.js');
+  const keys = Array.from({ length: 4 }, () => generateKeyPair('ml-dsa-65'));
+  const genesis = { chainId: 'argeni-restart', timestamp: Date.now(), coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 }, blockTimeMs: 100, maxTxsPerBlock: 10, minFee: '1000', blockReward: '0', maxSupply: (500_000_000n * ONE).toString(), validators: keys.map((k) => k.publicKey), alloc: {} };
+  const chain = new Chain(genesis);
+  const proposerIndex = keys.findIndex((k) => k.publicKey === chain.proposerFor(1, 0));
+  const sent = [];
+  const signLog = memorySignLog(); // stands in for the node's sign-state.json on disk
+  const start = () => { const c = new Consensus({ chain, privateKey: keys[proposerIndex].privateKey, broadcast: (m) => sent.push(m), signLog }); c.start(); return c; };
+  let c = start();
+  await new Promise((r) => setTimeout(r, 300));
+  c.stop();
+  c = start(); // restart at the same height and round
+  await new Promise((r) => setTimeout(r, 300));
+  c.stop();
+  const proposals = new Set(sent.filter((m) => m.type === 'proposal' && m.height === 1 && m.round === 0).map((m) => m.blockHash));
+  assert.equal(proposals.size, 1, 'one block proposed for height 1, round 0, before and after the restart');
+});
+
+test('an account can only queue transactions it can pay for', () => {
+  const ctx = setup();
+  const broke = generateKeyPair('ml-dsa-65');
+  assert.match(ctx.chain.addTx(createTransfer({ chainId: ctx.genesis.chainId, privateKey: broke.privateKey, to: ctx.aliceAddr, amount: 1n, fee: FEE, nonce: 1 })).error, /insufficient balance/);
+  for (let n = 0; n < 32; n++) submit(ctx, createTransfer({ chainId: ctx.genesis.chainId, privateKey: ctx.alice.privateKey, to: ctx.aliceAddr, amount: 1n, fee: FEE, nonce: n }));
+  assert.match(ctx.chain.addTx(createTransfer({ chainId: ctx.genesis.chainId, privateKey: ctx.alice.privateKey, to: ctx.aliceAddr, amount: 1n, fee: FEE, nonce: 32 })).error, /32 pending/);
+});
+
+test('tiny vesting grants are refused, so nobody can fill an address with junk grants', () => {
+  const ctx = setup();
+  const victim = addressFromPublicKey(generateKeyPair('ml-dsa-65').publicKey);
+  const junk = createTx({ type: 'vest', chainId: ctx.genesis.chainId, to: victim, amount: 1n, lockMonths: 120, vestMonths: 0, fee: FEE, nonce: 0 }, { privateKey: ctx.alice.privateKey });
+  assert.match(ctx.chain.addTx(junk).error, /at least/);
+});

@@ -164,3 +164,36 @@ test('live nodes talk only through the encrypted channel: a wiretap sees no vote
     await new Promise((resolve) => tap.close(resolve));
   }
 });
+
+test('an outsider cannot fill the peer list with addresses it does not own', async () => {
+  const p2p = await import('../src/p2p.js');
+  const keys = Array.from({ length: 4 }, () => generateKeyPair('ml-dsa-65'));
+  const genesis = { chainId: 'argeni-peers', timestamp: Date.now(), coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 }, blockTimeMs: 300, maxTxsPerBlock: 10, minFee: '1000', blockReward: '0', maxSupply: (500_000_000n * ONE).toString(), validators: keys.map((k) => k.publicKey), alloc: {} };
+  const [port, honestPort] = [await freePort(), await freePort()];
+  const node = new Node({ genesis, port, validatorKey: keys[0].privateKey, log: () => {} });
+  await node.start();
+  const url = `http://127.0.0.1:${port}`;
+  try {
+    const { genesisHash } = await fetchJson(`${url}/status`);
+    const me = generateKeyPair('ml-dsa-65');
+    const { hello, kemPrivateKey } = p2p.createHello({ chainId: genesis.chainId, genesisHash, identityKey: me.privateKey, identityPublicKey: me.publicKey });
+    const session = p2p.completeHello(hello, kemPrivateKey, await fetchJson(`${url}/p2p/handshake`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hello }) }));
+    const announce = async (target) => {
+      const req = session.encryptRequest({ method: 'POST', path: '/peers', body: { url: target, genesisHash } });
+      const res = await fetchJson(`${url}/p2p`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) });
+      return session.decryptReply(req.seq, res.ct);
+    };
+    for (let i = 0; i < 5; i++) assert.equal((await announce(`http://127.0.0.1:${honestPort}`)).status, 400, 'nobody answers there');
+    // A real node at an address that is not the announcer's own: refused, because the identities differ.
+    const other = new Node({ genesis, port: honestPort, log: () => {} });
+    await other.start();
+    try {
+      assert.match((await announce(`http://127.0.0.1:${honestPort}`)).body.error, /different node/);
+    } finally {
+      await other.stop();
+    }
+    assert.equal(node.peers.length, 0);
+  } finally {
+    await node.stop();
+  }
+});

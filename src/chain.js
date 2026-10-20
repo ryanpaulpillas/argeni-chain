@@ -10,6 +10,9 @@ export { State };
 import { isUnits } from './coin.js';
 
 const MAX_MEMPOOL = 10_000;
+const MAX_PENDING_PER_ACCOUNT = 32;
+// What a pending transaction can take from its sender's spendable balance.
+const pendingCost = (t) => BigInt(t.fee) + (['transfer', 'vest', 'validator-join', 'validator-bond'].includes(t.type) ? BigInt(t.amount) : 0n);
 export const MAX_CLOCK_DRIFT_MS = 10_000;
 
 // Byzantine fault tolerance: with n validators, up to f = floor((n - 1) / 3) may be faulty or
@@ -46,8 +49,9 @@ export function validateGenesis(genesis) {
   if (genesis.maxBlockBytes !== undefined && (!Number.isSafeInteger(genesis.maxBlockBytes) || genesis.maxBlockBytes < 100_000)) errors.push('maxBlockBytes');
   if (genesis.staking !== undefined) {
     const st = genesis.staking;
+    if (st && st.minVestAmount !== undefined && !isUnits(st.minVestAmount)) errors.push('staking.minVestAmount');
     const ints = ['maxValidators', 'minValidators', 'unbondingMs', 'jailMs', 'downtimeBlocks', 'downtimeSlashBps', 'doubleSignSlashBps', 'evidenceMaxAgeBlocks'];
-    if (typeof st !== 'object' || Array.isArray(st) || Object.keys(st).some((k) => k !== 'minStake' && !ints.includes(k))
+    if (typeof st !== 'object' || Array.isArray(st) || Object.keys(st).some((k) => k !== 'minStake' && k !== 'minVestAmount' && !ints.includes(k))
       || (st.minStake !== undefined && !isUnits(st.minStake)) || ints.some((k) => st[k] !== undefined && (!Number.isSafeInteger(st[k]) || st[k] < 0))
       || (st.downtimeSlashBps ?? 0) > 10_000 || (st.doubleSignSlashBps ?? 0) > 10_000 || st.maxValidators === 0 || st.downtimeBlocks === 0) errors.push('staking');
   }
@@ -255,6 +259,11 @@ export class Chain {
     for (const pending of this.mempool.values()) {
       if (pending.from === tx.from && pending.nonce === tx.nonce) return { ok: false, error: 'a transaction with this nonce is already pending' };
     }
+    // An account can only queue what it can pay for, so an empty account cannot fill the mempool.
+    const mine = [...this.mempool.values()].filter((p) => p.from === tx.from);
+    if (mine.length >= MAX_PENDING_PER_ACCOUNT) return { ok: false, error: `this account already has ${MAX_PENDING_PER_ACCOUNT} pending transactions; wait for some to be included` };
+    const queued = mine.reduce((sum, p) => sum + pendingCost(p), 0n) + pendingCost(tx);
+    if (this.state.spendable(from, Math.max(this.now(), this.tipTimestamp + 1)) < queued) return { ok: false, error: 'insufficient balance for this and the account\'s pending transactions' };
     if (this.mempool.size >= MAX_MEMPOOL) return { ok: false, error: 'mempool full' };
     this.mempool.set(hash, tx);
     return { ok: true, hash, known: false };

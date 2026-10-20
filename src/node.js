@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { Chain } from './chain.js';
-import { Consensus } from './consensus.js';
+import { Consensus, memorySignLog } from './consensus.js';
 import { addressFromPublicKey, generateKeyPair, isAddress, keyTypeOf, parseMultisig, publicKeyFromPrivate, PQ_KEY_TYPES } from './crypto.js';
 import { createHello, acceptHello, completeHello, SESSION_MAX_AGE_MS } from './p2p.js';
 import { createTransfer, createTx, txHash } from './tx.js';
@@ -40,6 +40,7 @@ export class Node {
     // joins the gossip without anyone editing other nodes' configs.
     this.relayed = new Set(); // consensus messages already passed on
     this.announced = new Set(); // peers that joined by announcing themselves (not in our config)
+    this.peerFailures = new Map(); // peer URL -> failed calls in a row
     // Encrypted peer links (p2p.js): ML-KEM-768 key exchange, ML-DSA identities, AES-256-GCM.
     // A validator's identity is its validator key; any other node uses a fresh ML-DSA-65 key.
     this.encryptPeers = encryptPeers;
@@ -90,6 +91,7 @@ export class Node {
         broadcast: (msg) => this.#broadcast('/consensus', msg),
         // A finalized block already travels in the consensus 'commit' message; no second copy.
         onEquivocation: (a, b) => this.#reportDoubleSign(a, b),
+        signLog: this.dataDir ? fileSignLog(path.join(this.dataDir, 'sign-state.json')) : memorySignLog(),
         log: this.log,
       });
       this.consensus.start();
@@ -212,7 +214,7 @@ export class Node {
   }
 
   #broadcast(route, body) {
-    for (const peer of this.peers) this.#peerCall(peer, 'POST', route, body).catch(() => {});
+    for (const peer of this.peers) this.#peerCall(peer, 'POST', route, body).catch(() => this.#peerFailed(peer));
   }
 
   // Passes on a message received from a peer, only where it is needed: the configured validators
@@ -221,7 +223,7 @@ export class Node {
   #relay(route, body, fromKey) {
     const fromAnnounced = [...this.announced].some((url) => this.pinnedPeers.get(url) === fromKey);
     const targets = fromAnnounced ? this.peers.filter((url) => this.pinnedPeers.get(url) !== fromKey) : [...this.announced];
-    for (const peer of targets) this.#peerCall(peer, 'POST', route, body).catch(() => {});
+    for (const peer of targets) this.#peerCall(peer, 'POST', route, body).catch(() => this.#peerFailed(peer));
   }
 
   // ---- encrypted peer channel (see p2p.js) ----
@@ -241,6 +243,7 @@ export class Node {
     }
     if (!res.ok) throw new Error(out.error ?? `HTTP ${res.status}`);
     const reply = session.decryptReply(request.seq, out.ct);
+    this.peerFailures.delete(peer);
     if (reply.status >= 400) throw new Error(reply.body?.error ?? `HTTP ${reply.status}`);
     return reply.body;
   }
@@ -259,6 +262,52 @@ export class Node {
     opening.then((session) => { opening.expiredAt = () => session.expired; }, () => this.outbound.delete(peer));
     this.outbound.set(peer, opening);
     return opening;
+  }
+
+  // Adds an announced peer after checking it answers with the announcer's own identity. Each identity
+  // keeps one address (a newer announcement replaces the older one).
+  async #verifiedPeer(peer, peerKey) {
+    const known = this.peers.includes(peer);
+    if (!known) {
+      this.outbound.delete(peer);
+      this.pinnedPeers.delete(peer);
+    }
+    let session;
+    try {
+      session = await this.#session(peer);
+    } catch {
+      if (!known) { this.outbound.delete(peer); this.pinnedPeers.delete(peer); }
+      return { status: 400, body: { error: 'could not reach that address' } };
+    }
+    if (session.peerKey !== peerKey) {
+      if (!known) { this.outbound.delete(peer); this.pinnedPeers.delete(peer); }
+      return { status: 400, body: { error: 'that address belongs to a different node' } };
+    }
+    if (known) return { status: 200, body: { ok: true, known: true } };
+    for (const old of [...this.announced]) if (this.pinnedPeers.get(old) === peerKey) this.#dropPeer(old);
+    if (this.peers.length >= MAX_PEERS) return { status: 503, body: { error: 'peer list full' } };
+    this.peers.push(peer);
+    this.announced.add(peer);
+    this.log(`new peer ${peer}`);
+    return { status: 200, body: { ok: true } };
+  }
+
+  #dropPeer(peer) {
+    this.peers = this.peers.filter((p) => p !== peer);
+    this.announced.delete(peer);
+    this.outbound.delete(peer);
+    this.pinnedPeers.delete(peer);
+    this.peerFailures.delete(peer);
+  }
+
+  // Announced peers that stay unreachable are dropped (configured peers are kept).
+  #peerFailed(peer) {
+    const n = (this.peerFailures.get(peer) ?? 0) + 1;
+    this.peerFailures.set(peer, n);
+    if (n >= 20 && this.announced.has(peer)) {
+      this.log(`dropping unreachable peer ${peer}`);
+      this.#dropPeer(peer);
+    }
   }
 
   #pruneSessions() {
@@ -545,12 +594,16 @@ export class Node {
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) return send(res, 400, { error: 'url must be a plain http(s) URL' });
       if (body.genesisHash !== chain.genesisHash) return send(res, 400, { error: 'different chain' });
       const peer = url.origin + url.pathname.replace(/\/$/, '');
-      if (peer === this.publicUrl || peer === this.url || this.peers.includes(peer)) return send(res, 200, { ok: true, known: true });
-      if (this.peers.length >= MAX_PEERS) return send(res, 503, { error: 'peer list full' });
-      this.peers.push(peer);
-      this.announced.add(peer);
-      this.log(`new peer ${peer}`);
-      return send(res, 200, { ok: true });
+      if (peer === this.publicUrl || peer === this.url || (this.peers.includes(peer) && !this.encryptPeers)) return send(res, 200, { ok: true, known: true });
+      if (!this.encryptPeers || !peerKey) {
+        if (this.peers.includes(peer)) return send(res, 200, { ok: true, known: true });
+        if (this.peers.length >= MAX_PEERS) return send(res, 503, { error: 'peer list full' });
+        this.peers.push(peer);
+        this.announced.add(peer);
+        return send(res, 200, { ok: true });
+      }
+      // Prove the address belongs to the node announcing it: shake hands with it and compare identities.
+      return this.#verifiedPeer(peer, peerKey).then((verdict) => send(res, verdict.status, verdict.body));
     }
     return send(res, 404, { error: 'not found' });
   }
@@ -656,6 +709,25 @@ function txFields(tx) {
 }
 
 const parts2 = (pathname) => pathname.split('/').filter(Boolean);
+
+// What this validator last signed, kept on disk so a restart never produces a conflicting signature.
+// Written atomically (temporary file, then rename) before the message is sent.
+function fileSignLog(file) {
+  let cached;
+  return {
+    read() {
+      if (cached === undefined) {
+        try { cached = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { cached = null; }
+      }
+      return cached;
+    },
+    write(record) {
+      fs.writeFileSync(`${file}.tmp`, JSON.stringify(record));
+      fs.renameSync(`${file}.tmp`, file);
+      cached = record;
+    },
+  };
+}
 
 // A stand-in for an HTTP response, so the same handlers can answer requests from the encrypted channel.
 function collector() {
