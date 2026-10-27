@@ -2,7 +2,7 @@
 //
 //   node scripts/init-testnet.js --treasury <ag… address> [--validators 4] [--out testnet]
 //
-// The treasury (439,000,000 test ARGENI) is only an ADDRESS here: its key is created on the
+// The treasury (435,865,000 test ARGENI) is only an ADDRESS here: its key is created on the
 // operator's own computer and never touches the server. Validator and faucet keys are created
 // here, post-quantum (ML-DSA-87), readable only by the user running this script.
 import fs from 'node:fs';
@@ -41,6 +41,10 @@ const BASE_PORT = 26601;
 const validators = Array.from({ length: count }, (_, i) => writeKeyFile(path.join(root, 'keys', `validator-${i + 1}.json`), generateKeyPair('ml-dsa-87')));
 const faucet = writeKeyFile(path.join(root, 'keys', 'faucet.json'), generateKeyPair('ml-dsa-87'));
 
+// Q-Day Tripwire bounties (ARGENI), rising with the strength of the bait key.
+const TRIPWIRE_BOUNTIES = { 'ecc-160': '10000', 'ecc-192': '25000', 'ecc-224': '100000', 'ecc-256': '1000000', secp256k1: '1000000', 'rsa-2048': '1000000' };
+const TRIPWIRE_TOTAL = '3135000';
+
 const genesis = {
   chainId: values['chain-id'],
   timestamp: Date.now(),
@@ -64,9 +68,12 @@ const genesis = {
     doubleSignSlashBps: 500, // 5%
   },
   // Validator incentives (12%): paid by the chain to the validators that sign, front-loaded over 4 years.
+  // Q-Day Tripwire: bounties on bait keys nobody owns; breaking one proves classical keys are at risk,
+  // and the chain responds automatically (see src/tripwire.js). Bounties come out of the treasury.
+  tripwire: { bounties: Object.fromEntries(Object.entries(TRIPWIRE_BOUNTIES).map(([rung, n]) => [rung, parseAmount(n, DECIMALS).toString()])) },
   rewards: { years: ['24000000', '18000000', '12000000', '6000000'].map((n) => parseAmount(n, DECIMALS).toString()) },
   alloc: {
-    [values.treasury]: parseAmount('439000000', DECIMALS).toString(),
+    [values.treasury]: parseAmount('435865000', DECIMALS).toString(),
     [faucet.address]: parseAmount('1000000', DECIMALS).toString(),
   },
 };
@@ -98,7 +105,8 @@ for (let i = 1; i <= count; i++) {
 console.log(`testnet created in ${root}
 chain id    ${genesis.chainId}
 validators  ${count} (ML-DSA-87, post-quantum, NIST category 5)
-treasury    ${values.treasury}  439,000,000 test ARGENI (key stays off this server)
+treasury    ${values.treasury}  435,865,000 test ARGENI (key stays off this server)
+tripwire    3,135,000 test ARGENI in Q-Day bounties on 6 bait keys
 rewards     60,000,000 test ARGENI validator pool, paid by the chain (24M, 18M, 12M, 6M a year)
 faucet      ${faucet.address}  1,000,000 test ARGENI, served by node 1
 Back up ${path.join(root, 'keys')} somewhere safe and private.`);

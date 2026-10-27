@@ -14,6 +14,10 @@ const DECIMALS = 18;
 const MAX_SUPPLY = '500000000'; // 500 million ARGENI, all created at genesis
 const FAUCET_SHARE = '1000000';
 const REWARD_POOL = '60000000'; // validator incentives, paid out by the chain
+// Q-Day Tripwire bounties (ARGENI), rising with the strength of the bait key.
+const TRIPWIRE_BOUNTIES = { 'ecc-160': '10000', 'ecc-192': '25000', 'ecc-224': '100000', 'ecc-256': '1000000', secp256k1: '1000000', 'rsa-2048': '1000000' };
+const TRIPWIRE_TOTAL = '3135000';
+
 
 if (fs.existsSync(root)) {
   console.error(`${root} already exists. Delete it first to start a fresh devnet.`);
@@ -39,9 +43,12 @@ const genesis = {
   maxSupply: parseAmount(MAX_SUPPLY, DECIMALS).toString(),
   validators: validators.map((v) => v.publicKey),
   // Validator incentives (12%): paid by the chain to the validators that sign, front-loaded over 4 years.
+  // Q-Day Tripwire: bounties on bait keys nobody owns; breaking one proves classical keys are at risk,
+  // and the chain responds automatically (see src/tripwire.js). Bounties come out of the treasury.
+  tripwire: { bounties: Object.fromEntries(Object.entries(TRIPWIRE_BOUNTIES).map(([rung, n]) => [rung, parseAmount(n, DECIMALS).toString()])) },
   rewards: { years: ['24000000', '18000000', '12000000', '6000000'].map((n) => parseAmount(n, DECIMALS).toString()) },
   alloc: {
-    [treasury.address]: (parseAmount(MAX_SUPPLY, DECIMALS) - parseAmount(FAUCET_SHARE, DECIMALS) - parseAmount(REWARD_POOL, DECIMALS)).toString(),
+    [treasury.address]: (parseAmount(MAX_SUPPLY, DECIMALS) - parseAmount(FAUCET_SHARE, DECIMALS) - parseAmount(REWARD_POOL, DECIMALS) - parseAmount(TRIPWIRE_TOTAL, DECIMALS)).toString(),
     [faucet.address]: parseAmount(FAUCET_SHARE, DECIMALS).toString(),
   },
 };
@@ -65,7 +72,8 @@ chain id   ${genesis.chainId}
 coin       ${genesis.coin.symbol} (${DECIMALS} decimals)
 validators ${validators.map((v) => v.address).join('\n           ')}
 supply     500,000,000 ARGENI, fixed (no minting)
-treasury   ${treasury.address} (439,000,000)
+treasury   ${treasury.address} (435,865,000)
+tripwire   3,135,000 in Q-Day bounties (6 bait keys)
 rewards    60,000,000 validator pool (24M, 18M, 12M, 6M a year)
 faucet     ${faucet.address} (1,000,000, served by node 1)
 
