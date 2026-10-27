@@ -9,8 +9,14 @@
 // many blocks; can return with validator-unjail) or 'unbonding' (left or slashed; the stake returns to
 // the owner when the unbonding period ends). Keys caught double-signing are banned for good.
 // Every active validator has one vote; joining needs at least minStake bonded.
+//
+// Q-Day Tripwire (when genesis.tripwire is set; see tripwire.js): canary = { pool, commits, broken,
+// retire }. pool is the bounty ARGENI not yet paid (counted in supply); commits maps a claim
+// commitment to the block it was made in; broken maps a rung to { height, by }; retire maps a key
+// type to the block height from which the tripwire retired it.
 import { addressFromPublicKey, hashObject, keyTypeOf, sha256 } from './crypto.js';
 import { migrationCommitment } from './tx.js';
+import { bountyPool, canaryCommitment, checkSolution, retirementFor } from './tripwire.js';
 
 // Average Gregorian month, so "12 months" means one year of block time.
 export const MONTH_MS = 2_629_746_000;
@@ -95,7 +101,8 @@ export function migrationError(account, tx, { height, retiredAt = () => undefine
 }
 
 export class State {
-  constructor(accounts = new Map(), supply = 0n, validators = [], banned = new Set(), rewardPool = 0n, rewardsPaid = 0n) {
+  constructor(accounts = new Map(), supply = 0n, validators = [], banned = new Set(), rewardPool = 0n, rewardsPaid = 0n, canary = null) {
+    this.canary = canary;
     this.accounts = accounts;
     this.supply = supply;
     this.validators = validators;
@@ -119,13 +126,17 @@ export class State {
       state.rewardPool = genesis.rewards.years.reduce((sum, a) => sum + BigInt(a), 0n);
       state.supply += state.rewardPool;
     }
+    if (genesis.tripwire) {
+      state.canary = { pool: bountyPool(genesis.tripwire), commits: {}, broken: {}, retire: {} };
+      state.supply += state.canary.pool;
+    }
     return state;
   }
 
   clone() {
     const copy = new Map();
     for (const [address, account] of this.accounts) copy.set(address, { ...account });
-    return new State(copy, this.supply, this.validators.map((v) => ({ ...v })), new Set(this.banned), this.rewardPool, this.rewardsPaid);
+    return new State(copy, this.supply, this.validators.map((v) => ({ ...v })), new Set(this.banned), this.rewardPool, this.rewardsPaid, cloneCanary(this.canary));
   }
 
   get(address) {
@@ -219,7 +230,7 @@ export class State {
   // ---- transactions ----
 
   // Applies a transaction that already passed checkTx. Throws if the state rejects it.
-  // ctx = { height, timestamp, retiredAt, params, rewardAddress }.
+  // ctx = { height, timestamp, retiredAt, params, rewardAddress, chainId, tripwire }.
   applyTx(tx, ctx) {
     const from = addressFromPublicKey(tx.from);
     const sender = this.get(from);
@@ -344,6 +355,36 @@ export class State {
         return;
       }
 
+      case 'canary-commit': {
+        if (!this.canary) throw new Error('this chain has no Q-Day Tripwire');
+        if (Object.hasOwn(this.canary.commits, tx.commitment)) throw new Error('this commitment was already made');
+        spend(0n, 'insufficient balance for the fee');
+        this.canary.commits[tx.commitment] = ctx.height;
+        return;
+      }
+
+      case 'canary-reveal': {
+        const tw = ctx.tripwire;
+        if (!this.canary || !tw) throw new Error('this chain has no Q-Day Tripwire');
+        if (!Object.hasOwn(tw.bounties, tx.rung)) throw new Error(`rung ${tx.rung} has no bounty on this chain`);
+        const broken = this.canary.broken[tx.rung];
+        if (broken) throw new Error(`rung ${tx.rung} was already broken at block ${broken.height}`);
+        const commitment = canaryCommitment(ctx.chainId, tx.rung, from, tx.solution);
+        const at = this.canary.commits[commitment];
+        if (at === undefined) throw new Error('no canary-commit for this solution from this account; commit first');
+        if (ctx.height - at < tw.revealDelayBlocks) throw new Error(`too early: reveal from block ${at + tw.revealDelayBlocks}`);
+        if (!checkSolution(tx.rung, tx.solution)) throw new Error(`this solution does not break rung ${tx.rung}`);
+        spend(0n, 'insufficient balance for the fee');
+        const bounty = BigInt(tw.bounties[tx.rung]) < this.canary.pool ? BigInt(tw.bounties[tx.rung]) : this.canary.pool;
+        this.canary.pool -= bounty;
+        this.credit(from, bounty);
+        delete this.canary.commits[commitment];
+        this.canary.broken[tx.rung] = { height: ctx.height, by: from };
+        const retire = retirementFor(tx.rung, ctx.height, tw);
+        if (retire !== undefined && !(this.canary.retire.ed25519 <= retire)) this.canary.retire.ed25519 = retire;
+        return;
+      }
+
       default:
         throw new Error('unsupported transaction type');
     }
@@ -363,6 +404,7 @@ export class State {
     return hashObject({
       supply: this.supply.toString(), accounts: entries, validators, banned: [...this.banned].map((k) => sha256(k)).sort(),
       rewards: [this.rewardPool.toString(), this.rewardsPaid.toString()],
+      ...(this.canary ? { canary: { ...this.canary, pool: this.canary.pool.toString() } } : {}),
     });
   }
 
@@ -375,6 +417,7 @@ export class State {
       banned: [...this.banned],
       rewardPool: this.rewardPool.toString(),
       rewardsPaid: this.rewardsPaid.toString(),
+      ...(this.canary ? { canary: { ...this.canary, pool: this.canary.pool.toString() } } : {}),
     };
   }
 
@@ -386,8 +429,13 @@ export class State {
       new Set(json.banned),
       BigInt(json.rewardPool ?? '0'),
       BigInt(json.rewardsPaid ?? '0'),
+      json.canary ? { ...cloneCanary({ ...json.canary, pool: 0n }), pool: BigInt(json.canary.pool) } : null,
     );
   }
+}
+
+function cloneCanary(c) {
+  return c && { pool: c.pool, commits: { ...c.commits }, broken: Object.fromEntries(Object.entries(c.broken).map(([k, v]) => [k, { ...v }])), retire: { ...c.retire } };
 }
 
 function normalizeGrant(g, defaultStart) {

@@ -11,9 +11,12 @@
 //   validator-join / -bond / -leave / -unjail   staking: join the validator set, add stake, leave
 //             (stake returns after unbonding), return after a downtime jail
 //   evidence  two conflicting signed votes from one validator; it is slashed and banned
+//   canary-commit / canary-reveal   claim a Q-Day Tripwire bounty: commit to a hash of the solution,
+//             then reveal it; a valid break raises the chain's alert level (see tripwire.js)
 // Any of them can come from a multisig account ("msig:m:key,…", m of the keys sign).
 import { canonical, hashObject, sha256, sign, verify, isAddress, isHex, isPublicKey, keyTypeOf, publicKeyFromPrivate, addressFromPublicKey, PQ_KEY_TYPES } from './crypto.js';
 import { isUnits } from './coin.js';
+import { RUNGS, normalizeSolution } from './tripwire.js';
 
 export const MAX_MEMO_LENGTH = 256;
 export const MAX_VESTING_MONTHS = 120;
@@ -35,6 +38,9 @@ const FIELDS = {
   'validator-unjail': [...ENVELOPE, 'validator'],
   // Proof that a validator signed two different blocks for the same height and round.
   evidence: [...ENVELOPE, 'voteA', 'voteB'],
+  // Q-Day Tripwire claim: first a hash of (chain, rung, claimer, solution), then the solution itself.
+  'canary-commit': [...ENVELOPE, 'commitment'],
+  'canary-reveal': [...ENVELOPE, 'rung', 'solution'],
 };
 export const TX_TYPES = Object.keys(FIELDS);
 const VOTE_FIELDS = ['type', 'height', 'round', 'blockHash', 'validRound', 'validator', 'signature'];
@@ -157,7 +163,12 @@ export function checkTx(tx, { chainId, minFee }, { voteBytes } = {}) {
       if (!positive(tx.amount)) return 'amount must be a positive base-unit integer string';
       break;
     case 'pq-commit':
+    case 'canary-commit':
       if (!isHex(tx.commitment, 32)) return 'commitment must be a 32-byte hex hash';
+      break;
+    case 'canary-reveal':
+      if (!Object.hasOwn(RUNGS, tx.rung)) return `rung must be one of ${Object.keys(RUNGS).join(', ')}`;
+      if (!normalizeSolution(tx.rung, tx.solution)) return RUNGS[tx.rung].kind === 'rsa' ? 'solution must be "<p hex>.<q hex>"' : 'solution must be a hex private key';
       break;
     case 'migrate':
       if (!PQ_KEY_TYPES.includes(keyTypeOf(tx.to)) || !isPublicKey(tx.to)) return `migration target must be a post-quantum public key (${PQ_KEY_TYPES.join(', ')})`;

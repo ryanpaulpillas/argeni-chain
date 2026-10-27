@@ -8,6 +8,7 @@ import { addressFromPublicKey, generateKeyPair, isAddress, keyTypeOf, parseMulti
 import { createHello, acceptHello, completeHello, SESSION_MAX_AGE_MS } from './p2p.js';
 import { createTransfer, createTx, txHash } from './tx.js';
 import { formatAmount, parseAmount } from './coin.js';
+import { RUNG_IDS, LEVEL_NAMES, alertLevel, rungInfo } from './tripwire.js';
 import { totalLocked, vestingEnd } from './state.js';
 
 // Post-quantum (ML-DSA-65) signatures are ~3.3 KB each, so blocks and proposals can be a few MB.
@@ -430,6 +431,24 @@ export class Node {
       });
     }
     if (parts[0] === 'genesis' && parts.length === 1) return send(res, 200, chain.genesis);
+    if (parts[0] === 'tripwire' && parts.length === 1) {
+      const canary = chain.state.canary;
+      if (!canary) return send(res, 404, { error: 'this chain has no Q-Day Tripwire' });
+      const symbol = chain.genesis.coin.symbol;
+      const level = alertLevel(canary.broken);
+      return send(res, 200, {
+        level, levelName: LEVEL_NAMES[level],
+        ed25519RetiredAt: chain.retiredAt('ed25519') ?? null,
+        revealDelayBlocks: chain.tripwire.revealDelayBlocks, graceBlocks: chain.tripwire.graceBlocks,
+        bountyPoolLeft: `${formatAmount(canary.pool, decimals)} ${symbol}`,
+        pendingClaims: Object.keys(canary.commits).length,
+        rungs: RUNG_IDS.filter((id) => Object.hasOwn(chain.tripwire.bounties, id)).map((id) => ({
+          ...rungInfo(id),
+          bounty: `${formatAmount(chain.tripwire.bounties[id], decimals)} ${symbol}`,
+          broken: canary.broken[id] ?? null,
+        })),
+      });
+    }
     if (parts[0] === 'snapshot' && parts.length === 1) {
       if (!query.has('height')) return send(res, 200, { heights: [...this.snapshots.keys()], every: this.snapshotEvery });
       const snap = this.snapshots.get(Number(query.get('height')));
@@ -703,6 +722,10 @@ function txFields(tx) {
       return { ...base, to: addressFromPublicKey(tx.validator), memo: 'Validator returns from jail' };
     case 'evidence':
       return { ...base, to: addressFromPublicKey(tx.voteA.validator), memo: `Double-signing evidence at block ${tx.voteA.height}: validator slashed` };
+    case 'canary-commit':
+      return { ...base, memo: 'Q-Day Tripwire: claim commitment', commitment: tx.commitment };
+    case 'canary-reveal':
+      return { ...base, memo: `Q-Day Tripwire: ${tx.rung} broken`, rung: tx.rung };
     default:
       return { ...base, to: tx.to, amount: tx.amount, memo: tx.memo ?? '' };
   }

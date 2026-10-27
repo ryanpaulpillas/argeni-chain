@@ -8,6 +8,7 @@ import { checkTx, txHash } from './tx.js';
 import { State, migrationError, stakingParams, MAX_GRANTS } from './state.js';
 export { State };
 import { isUnits } from './coin.js';
+import { bountyPool, tripwireGenesisErrors, tripwireParams } from './tripwire.js';
 
 const MAX_MEMPOOL = 10_000;
 const MAX_PENDING_PER_ACCOUNT = 32;
@@ -46,6 +47,7 @@ export function validateGenesis(genesis) {
   if (genesis.ed25519SunsetHeight !== undefined && (!Number.isSafeInteger(genesis.ed25519SunsetHeight) || genesis.ed25519SunsetHeight < 1)) errors.push('ed25519SunsetHeight');
   if (genesis.retiredKeyTypes !== undefined && (typeof genesis.retiredKeyTypes !== 'object' || Array.isArray(genesis.retiredKeyTypes)
     || !Object.entries(genesis.retiredKeyTypes).every(([type, h]) => KEY_TYPES.includes(type) && Number.isSafeInteger(h) && h >= 1))) errors.push('retiredKeyTypes');
+  errors.push(...tripwireGenesisErrors(genesis.tripwire));
   if (genesis.maxBlockBytes !== undefined && (!Number.isSafeInteger(genesis.maxBlockBytes) || genesis.maxBlockBytes < 100_000)) errors.push('maxBlockBytes');
   if (genesis.staking !== undefined) {
     const st = genesis.staking;
@@ -76,28 +78,33 @@ export function validateGenesis(genesis) {
     errors.push('alloc');
   } else if (isUnits(genesis.maxSupply)) {
     const pool = Array.isArray(genesis.rewards?.years) && genesis.rewards.years.every(isUnits) ? genesis.rewards.years.reduce((sum, amt) => sum + BigInt(amt), 0n) : 0n;
-    const total = Object.values(genesis.alloc).reduce((sum, amt) => sum + BigInt(amt), 0n) + pool;
-    if (total > BigInt(genesis.maxSupply)) errors.push('alloc exceeds maxSupply (counting the validator reward pool)');
+    const bounties = tripwireGenesisErrors(genesis.tripwire).length ? 0n : bountyPool(genesis.tripwire);
+    const total = Object.values(genesis.alloc).reduce((sum, amt) => sum + BigInt(amt), 0n) + pool + bounties;
+    if (total > BigInt(genesis.maxSupply)) errors.push('alloc exceeds maxSupply (counting the validator reward pool and tripwire bounties)');
   }
   if (errors.length) throw new Error(`invalid genesis: ${errors.join(', ')}`);
 }
 
 // Algorithm retirement: genesis.retiredKeyTypes maps a key type to the block height from which it is
 // retired (genesis.ed25519SunsetHeight is the older spelling for Ed25519). A retired key may only be
-// used to migrate its account to a key type that is still active.
-export function retiredAt(genesis, type) {
-  return genesis.retiredKeyTypes?.[type] ?? (type === 'ed25519' ? genesis.ed25519SunsetHeight : undefined);
+// used to migrate its account to a key type that is still active. The Q-Day Tripwire can bring a
+// retirement forward (state.canary.retire): the earlier of the two heights applies.
+export function retiredAt(genesis, type, state = null) {
+  const planned = genesis.retiredKeyTypes?.[type] ?? (type === 'ed25519' ? genesis.ed25519SunsetHeight : undefined);
+  const tripped = state?.canary?.retire?.[type];
+  if (tripped === undefined) return planned;
+  return planned === undefined ? tripped : Math.min(planned, tripped);
 }
 
-// Returns an error string or null.
-export function sunsetError(genesis, tx, height) {
+// Returns an error string or null. `retired(type)` gives a key type's retirement height.
+export function sunsetError(retired, tx, height) {
   if (tx.type === 'migrate') return null;
   for (const type of memberKeyTypes(tx.from)) {
-    const sunset = retiredAt(genesis, type);
+    const sunset = retired(type);
     if (sunset && height >= sunset) return `${type} keys were retired at block ${sunset}; migrate this account to an active post-quantum key`;
   }
   if (tx.type === 'validator-join') {
-    const sunset = retiredAt(genesis, keyTypeOf(tx.validator));
+    const sunset = retired(keyTypeOf(tx.validator));
     if (sunset && height >= sunset) return `${keyTypeOf(tx.validator)} keys were retired at block ${sunset}; use another validator key type`;
   }
   return null;
@@ -129,6 +136,7 @@ export class Chain {
     this.genesis = genesis;
     this.genesisHash = hashObject(genesis);
     this.params = stakingParams(genesis);
+    this.tripwire = tripwireParams(genesis);
     this.dataDir = dataDir;
     this.now = now;
     this.base = 0; // height of the snapshot this node started from (0 = from genesis)
@@ -204,21 +212,27 @@ export class Chain {
     return () => this.listeners.delete(listener);
   }
 
+  // A key type's retirement height for the next block: planned in genesis, or brought forward by the
+  // tripwire in an already committed block (so the rules never change in the middle of a block).
+  retiredAt(type) {
+    return retiredAt(this.genesis, type, this.state);
+  }
+
   // Rules context for the block at `height` with `timestamp`.
   ctx(height, timestamp, proposer, state = this.state) {
     return {
-      height, timestamp, params: this.params, retiredAt: (type) => retiredAt(this.genesis, type), rewardAddress: state.rewardAddress(proposer),
-      rewards: this.genesis.rewards ?? null, genesisTimestamp: this.genesis.timestamp,
+      height, timestamp, params: this.params, retiredAt: (type) => this.retiredAt(type), rewardAddress: state.rewardAddress(proposer),
+      rewards: this.genesis.rewards ?? null, genesisTimestamp: this.genesis.timestamp, chainId: this.genesis.chainId, tripwire: this.tripwire,
     };
   }
 
   // Inputs to the migration security rules (state.js migrationError) for a block at `height`.
   migrationPolicy(height) {
-    return { height, retiredAt: (type) => retiredAt(this.genesis, type) };
+    return { height, retiredAt: (type) => this.retiredAt(type) };
   }
 
   #checkTx(tx, height) {
-    return checkTx(tx, this.genesis, { voteBytes: (vote) => voteSignBytes(this.genesis.chainId, vote) }) ?? sunsetError(this.genesis, tx, height);
+    return checkTx(tx, this.genesis, { voteBytes: (vote) => voteSignBytes(this.genesis.chainId, vote) }) ?? sunsetError((type) => this.retiredAt(type), tx, height);
   }
 
   // Pending nonce for an address: confirmed nonce plus its transactions waiting in the mempool.

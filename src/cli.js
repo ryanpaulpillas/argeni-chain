@@ -9,6 +9,7 @@ import { createTransfer, createMigration, createMigrationCommit, createTx, signi
 import { formatAmount, parseAmount } from './coin.js';
 import { writeKeyFile, readKeyFile, loadSigningKey, choosePassphrase, encryptKeyFile, decryptKeyFile, isEncrypted, askPassphrase } from './keyfile.js';
 import { Node, fetchJson } from './node.js';
+import { canaryCommitment, normalizeSolution, RUNG_IDS } from './tripwire.js';
 
 const DEFAULT_RPC = 'http://127.0.0.1:26601';
 
@@ -64,6 +65,15 @@ Staking (validators)
                                               leave the set; the stake returns after unbonding
   stake unjail --key <owner key> --validator <address>
                                               return after a downtime jail has ended
+
+Q-Day Tripwire (bounties for proof that classical cryptography is broken)
+  canary ladder [--rpc <url>]                 show the bait keys, bounties and the chain's alert level
+  canary commit --key <file> --rung <id> --solution <hex>
+                                              step 1 of a claim: publish only a hash of the solution
+  canary reveal --key <file> --rung <id> --solution <hex>
+                                              step 2, after the reveal delay: the chain checks the
+                                              solution, pays the bounty and raises its alert level
+                                              (rungs: ${RUNG_IDS.join(', ')}; rsa-2048 solution is "<p hex>.<q hex>")
 
 Default --rpc is ${DEFAULT_RPC}.`;
 
@@ -132,6 +142,8 @@ async function main(argv) {
       'validator-pubkey': { type: 'string' },
       operator: { type: 'string' },
       request: { type: 'string' },
+      rung: { type: 'string' },
+      solution: { type: 'string' },
     },
   });
   const rpc = values.rpc.replace(/\/$/, '');
@@ -199,6 +211,32 @@ async function main(argv) {
       const shutdown = () => node.stop().then(() => process.exit(0));
       process.on('SIGINT', shutdown);
       process.on('SIGTERM', shutdown);
+      return;
+    }
+    case 'canary': {
+      const sub = positionals[0];
+      if (sub === 'ladder') {
+        const tw = await fetchJson(`${rpc}/tripwire`);
+        console.log(`alert level ${tw.level} (${tw.levelName}); Ed25519 retired at ${tw.ed25519RetiredAt ?? 'not scheduled'}; bounties left ${tw.bountyPoolLeft}`);
+        for (const r of tw.rungs) console.log(`  ${r.id.padEnd(10)} ${r.name.padEnd(32)} level ${r.level}  ${r.bounty.padEnd(24)} ${r.broken ? `BROKEN at block ${r.broken.height} by ${r.broken.by}` : 'intact'}`);
+        return;
+      }
+      if (sub !== 'commit' && sub !== 'reveal') throw new Error('usage: argeni canary ladder|commit|reveal');
+      if (!values.key || !values.rung || !values.solution) throw new Error('--key, --rung and --solution are required');
+      if (!normalizeSolution(values.rung, values.solution)) throw new Error(`--rung must be one of ${RUNG_IDS.join(', ')} with a hex solution ("<p hex>.<q hex>" for rsa-2048)`);
+      const genesis = await fetchJson(`${rpc}/genesis`);
+      const key = await loadSigningKey(values.key);
+      if (!key.privateKey) throw new Error(`${values.key} is a multisig vault; claim from a single key`);
+      const from = addressFromPublicKey(key.publicKey);
+      const account = await fetchJson(`${rpc}/accounts/${from}`);
+      const fields = sub === 'commit'
+        ? { type: 'canary-commit', commitment: canaryCommitment(genesis.chainId, values.rung, from, values.solution) }
+        : { type: 'canary-reveal', rung: values.rung, solution: values.solution };
+      const tx = createTx({ chainId: genesis.chainId, fee: BigInt(genesis.minFee), nonce: account.pendingNonce, ...fields }, { privateKey: key.privateKey });
+      const { hash } = await postTx(rpc, tx);
+      console.log(sub === 'commit'
+        ? `committed a claim on ${values.rung} (only a hash is public)\nreveal after ${genesis.tripwire?.revealDelayBlocks ?? 10} blocks with: argeni canary reveal --key ${values.key} --rung ${values.rung} --solution <same>\ntx ${hash}`
+        : `revealed the solution for ${values.rung}; if it is valid the bounty is paid in the next block\ntx ${hash}`);
       return;
     }
     case 'status': {

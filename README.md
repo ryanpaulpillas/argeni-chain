@@ -45,6 +45,7 @@ Public testnet: see [deploy/DEPLOY.md](deploy/DEPLOY.md) (DigitalOcean + GoDaddy
 | Blocks | Header with height, timestamp, previous hash, Merkle root of transactions, state root and proposer, plus a commit certificate: precommit signatures from more than two thirds of validators. |
 | Consensus | BFT, following the Tendermint algorithm (`src/consensus.js`): propose, prevote, precommit, with locking and round changes. Blocks are final once committed; no reorgs. With n validators it tolerates f = floor((n-1)/3) faulty or offline ones (4 validators tolerate 1). Below quorum the chain pauses rather than forks. |
 | Supply | `maxSupply` is enforced: genesis allocations cannot exceed it and minting stops at it. Devnet: all 500,000,000 ARGENI exist at genesis (499M treasury, 1M faucet), `blockReward` 0. |
+| Q-Day Tripwire | Optional `genesis.tripwire` (`src/tripwire.js`). A ladder of bait keys nobody owns: points hashed onto secp160r1, P-192, P-224, P-256 and secp256k1 from the public seed `ARGENI Q-Day Tripwire v1`, plus the RSA-2048 Challenge number. Each carries a bounty from the fixed supply. A claim is `canary-commit` (hash of chain, rung, claimer and solution), then `canary-reveal` at least `revealDelayBlocks` later; the chain checks d·G = P (or p·q = N), pays the bounty and raises its alert level. Level 1 (ECC-160/192): recorded only. Level 2 (ECC-224): the Ed25519 sunset moves to `graceBlocks` from now (default about 30 days). Level 3 (a 256-bit curve or RSA-2048): Ed25519 is retired from the next block, and classical accounts can only migrate under the post-sunset rules. A tripwire can only bring a planned sunset earlier. `GET /tripwire` and `argeni canary ladder` show the ladder. |
 | Fees | Fees go to the block proposer. |
 | Idle chain | With `emptyBlockIntervalMs` in genesis, validators wait for transactions instead of making an empty block every `blockTimeMs`, with a heartbeat block at that interval. |
 | Public-node limits | Node config `trustProxy`, `faucetAddressCooldownMs`, `faucetIpCooldownMs`, `txsPerMinutePerIp`. |
@@ -54,7 +55,7 @@ Public testnet: see [deploy/DEPLOY.md](deploy/DEPLOY.md) (DigitalOcean + GoDaddy
 ### HTTP API
 
 `GET /status`, `GET /genesis`, `GET /blocks?limit=`, `GET /blocks/:height|latest`, `GET /accounts/:address`,
-`GET /accounts/:address/txs?limit=`, `GET /txs?limit=`, `GET /txs/:hash`, `POST /txs`, `POST /blocks` and `POST /consensus` (peers), `POST /faucet` (testnet node only).
+`GET /accounts/:address/txs?limit=`, `GET /txs?limit=`, `GET /txs/:hash`, `GET /tripwire`, `POST /txs`, `POST /blocks` and `POST /consensus` (peers), `POST /faucet` (testnet node only).
 
 ## Tested
 
