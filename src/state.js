@@ -207,6 +207,15 @@ export class State {
   // the previous block; `signers` = those whose signatures this block carries for it.
   endBlock(ctx, { prevSet = null, signers = null } = {}) {
     const p = ctx.params;
+    // Lapsed tripwire commitments: removed, their deposits added to the bounty pool. Commitments are
+    // kept in the order they were made, so only the oldest ever need checking.
+    if (this.canary && ctx.tripwire) {
+      for (const [c, entry] of Object.entries(this.canary.commits)) {
+        if (ctx.height - entry.height < ctx.tripwire.commitTtlBlocks) break;
+        this.canary.pool += BigInt(entry.deposit);
+        delete this.canary.commits[c];
+      }
+    }
     if (prevSet && signers) {
       for (const key of prevSet) {
         const v = this.validator(key);
@@ -358,8 +367,9 @@ export class State {
       case 'canary-commit': {
         if (!this.canary) throw new Error('this chain has no Q-Day Tripwire');
         if (Object.hasOwn(this.canary.commits, tx.commitment)) throw new Error('this commitment was already made');
-        spend(0n, 'insufficient balance for the fee');
-        this.canary.commits[tx.commitment] = ctx.height;
+        const deposit = ctx.tripwire.commitDeposit;
+        spend(deposit, 'insufficient balance for the fee and the commitment deposit');
+        this.canary.commits[tx.commitment] = { height: ctx.height, deposit: deposit.toString(), from };
         return;
       }
 
@@ -370,14 +380,15 @@ export class State {
         const broken = this.canary.broken[tx.rung];
         if (broken) throw new Error(`rung ${tx.rung} was already broken at block ${broken.height}`);
         const commitment = canaryCommitment(ctx.chainId, tx.rung, from, tx.solution);
-        const at = this.canary.commits[commitment];
-        if (at === undefined) throw new Error('no canary-commit for this solution from this account; commit first');
+        const entry = this.canary.commits[commitment];
+        if (entry === undefined) throw new Error('no canary-commit for this solution from this account; commit first');
+        const at = entry.height;
         if (ctx.height - at < tw.revealDelayBlocks) throw new Error(`too early: reveal from block ${at + tw.revealDelayBlocks}`);
         if (!checkSolution(tx.rung, tx.solution)) throw new Error(`this solution does not break rung ${tx.rung}`);
         spend(0n, 'insufficient balance for the fee');
         const bounty = BigInt(tw.bounties[tx.rung]) < this.canary.pool ? BigInt(tw.bounties[tx.rung]) : this.canary.pool;
         this.canary.pool -= bounty;
-        this.credit(from, bounty);
+        this.credit(from, bounty + BigInt(entry.deposit)); // the bounty, and the commitment deposit back
         delete this.canary.commits[commitment];
         this.canary.broken[tx.rung] = { height: ctx.height, by: from };
         const retire = retirementFor(tx.rung, ctx.height, tw);

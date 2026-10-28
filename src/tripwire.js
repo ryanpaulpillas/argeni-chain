@@ -15,8 +15,8 @@
 //
 // Alert levels, set by the strongest rung broken:
 //   1 watch    ECC-160 or ECC-192 broken: recorded on chain for wallets and explorers; no rule change.
-//   2 prepare  ECC-224 broken: the Ed25519 sunset is brought forward to graceBlocks from now.
-//   3 sunset   a 256-bit curve or RSA-2048 broken (Ed25519's strength): Ed25519 is retired from the
+//   2 prepare  ECC-224 or RSA-2048 broken: the Ed25519 sunset is brought forward to graceBlocks from now.
+//   3 sunset   a 256-bit curve broken (Ed25519's strength): Ed25519 is retired from the
 //              next block. Classical accounts can then only migrate, under the usual post-sunset rules
 //              (to the key they committed to with pq-commit, or if their key was never exposed).
 // Retirements take effect from the block after the reveal, so a block's rules never change halfway.
@@ -87,7 +87,10 @@ export const RSA_2048 = BigInt(
 );
 
 export const RUNGS = { ...Object.fromEntries(Object.entries(CURVES).map(([id, c]) => [id, { kind: 'ecc', name: c.name, bits: c.bits, level: c.level }])),
-  'rsa-2048': { kind: 'rsa', name: 'RSA-2048 Challenge', bits: 2048, level: 3 } };
+  // Level 2, not 3: a classical factoring breakthrough would not endanger Ed25519 (a different problem),
+  // and a quantum computer that factors RSA-2048 needs more qubits than one that breaks a 256-bit curve,
+  // so in the quantum case the 256-bit rungs (which pay more) are expected to be claimed too.
+  'rsa-2048': { kind: 'rsa', name: 'RSA-2048 Challenge', bits: 2048, level: 2 } };
 export const RUNG_IDS = Object.keys(RUNGS);
 export const LEVEL_NAMES = ['none', 'watch', 'prepare', 'sunset'];
 
@@ -247,6 +250,10 @@ export function tripwireParams(genesis) {
   return {
     bounties: t.bounties,
     revealDelayBlocks: t.revealDelayBlocks ?? 10,
+    // A commitment locks a refundable deposit and lapses after commitTtlBlocks; a lapsed deposit is added
+    // to the bounty pool. This keeps junk commitments from growing every node's state for free.
+    commitDeposit: BigInt(t.commitDeposit ?? (10n * 10n ** BigInt(genesis.coin.decimals)).toString()),
+    commitTtlBlocks: t.commitTtlBlocks ?? 100_000,
     // Level 2 brings the Ed25519 sunset this many blocks forward (default: about 30 days).
     graceBlocks: t.graceBlocks ?? Math.max(1, Math.round((30 * 86_400_000) / genesis.blockTimeMs)),
   };
@@ -255,10 +262,11 @@ export function tripwireParams(genesis) {
 export function tripwireGenesisErrors(t) {
   if (t === undefined) return [];
   const ok = t && typeof t === 'object' && !Array.isArray(t)
-    && Object.keys(t).every((k) => ['bounties', 'revealDelayBlocks', 'graceBlocks'].includes(k))
+    && Object.keys(t).every((k) => ['bounties', 'revealDelayBlocks', 'graceBlocks', 'commitDeposit', 'commitTtlBlocks'].includes(k))
+    && (t.commitDeposit === undefined || (typeof t.commitDeposit === 'string' && /^(0|[1-9]\d*)$/.test(t.commitDeposit)))
     && t.bounties && typeof t.bounties === 'object' && Object.keys(t.bounties).length > 0
     && Object.entries(t.bounties).every(([id, v]) => RUNGS[id] && typeof v === 'string' && /^(0|[1-9]\d*)$/.test(v))
-    && ['revealDelayBlocks', 'graceBlocks'].every((k) => t[k] === undefined || (Number.isSafeInteger(t[k]) && t[k] >= 1));
+    && ['revealDelayBlocks', 'graceBlocks', 'commitTtlBlocks'].every((k) => t[k] === undefined || (Number.isSafeInteger(t[k]) && t[k] >= 1));
   return ok ? [] : ['tripwire (bounties: { rung: units }, optional revealDelayBlocks and graceBlocks ≥ 1)'];
 }
 

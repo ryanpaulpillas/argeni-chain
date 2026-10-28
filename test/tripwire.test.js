@@ -15,7 +15,8 @@ const NODE_CURVES = { 'ecc-160': 'secp160r1', 'ecc-192': 'prime192v1', 'ecc-224'
 
 afterEach(() => testing.clear());
 
-function setup({ tripwire = { bounties: Object.fromEntries(RUNG_IDS.map((id) => [id, BOUNTY.toString()])), revealDelayBlocks: 3, graceBlocks: 20 }, sunset } = {}) {
+function setup({ tripwire = { bounties: Object.fromEntries(RUNG_IDS.map((id) => [id, BOUNTY.toString()])), revealDelayBlocks: 3, graceBlocks: 20 }, tripwireExtra = {}, sunset } = {}) {
+  if (tripwire) tripwire = { ...tripwire, ...tripwireExtra };
   const keys = Array.from({ length: 4 }, () => generateKeyPair('ml-dsa-65'));
   const legacy = generateKeyPair('ed25519');
   const committed = generateKeyPair('ed25519');
@@ -123,7 +124,7 @@ test('a valid claim pays the bounty and records the break; the rung cannot be cl
   const d = weakTarget('ecc-160');
   const before = ctx.chain.state.get(ctx.addr(ctx.hunter)).balance;
   const block = claim(ctx, ctx.hunter, 'ecc-160', d);
-  assert.equal(ctx.chain.state.get(ctx.addr(ctx.hunter)).balance, before + BOUNTY - 2n * FEE);
+  assert.equal(ctx.chain.state.get(ctx.addr(ctx.hunter)).balance, before + BOUNTY - 2n * FEE);  // the commitment deposit was locked at commit and returned with the bounty
   assert.deepEqual(ctx.chain.state.canary.broken['ecc-160'], { height: block.header.height, by: ctx.addr(ctx.hunter) });
   assert.equal(alertLevel(ctx.chain.state.canary.broken), 1);
   assert.equal(ctx.chain.retiredAt('ed25519'), undefined, 'level 1 changes no rules');
@@ -186,11 +187,11 @@ test('level 3 (a 256-bit curve broken) retires Ed25519 from the next block; comm
   assert.equal(ctx.chain.state.get(ctx.addr(ctx.committed)).migratedTo, addressFromPublicKey(escape.publicKey));
 });
 
-test('factoring RSA-2048 also triggers level 3', () => {
+test('factoring RSA-2048 triggers level 2 (prepare): a factoring break alone does not prove Ed25519 is broken', () => {
   const ctx = setup();
   testing.setTarget('rsa-2048', { n: 1009n * 2003n });
   const block = claim(ctx, ctx.hunter, 'rsa-2048', `${(1009).toString(16)}.${(2003).toString(16)}`);
-  assert.equal(ctx.chain.retiredAt('ed25519'), block.header.height + 1);
+  assert.equal(ctx.chain.retiredAt('ed25519'), block.header.height + ctx.chain.tripwire.graceBlocks);
 });
 
 test('the tripwire never pushes a planned sunset later', () => {
@@ -225,7 +226,7 @@ test('end to end: a node publishes the ladder and accepts a claim over HTTP', as
   const genesis = {
     chainId: 'argeni-tripwire-e2e', timestamp: Date.now(), coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 },
     blockTimeMs: 100, emptyBlockIntervalMs: 100, maxTxsPerBlock: 100, minFee: FEE.toString(), blockReward: '0', maxSupply: BILLION.toString(),
-    validators: [validator.publicKey], alloc: { [addressFromPublicKey(hunter.publicKey)]: (10n * ONE).toString() },
+    validators: [validator.publicKey], alloc: { [addressFromPublicKey(hunter.publicKey)]: (100n * ONE).toString() },
     tripwire: { bounties: { 'ecc-160': BOUNTY.toString(), 'ecc-256': (5n * BOUNTY).toString() }, revealDelayBlocks: 2 },
   };
   const node = new Node({ genesis, port, peers: [], validatorKey: validator.privateKey, log: () => {} });
@@ -251,8 +252,22 @@ test('end to end: a node publishes the ladder and accepts a claim over HTTP', as
     const after = await fetchJson(`${url}/tripwire`);
     assert.equal(after.rungs[0].broken.by, hunterAddr);
     assert.equal(after.bountyPoolLeft, '5000000 ARGENI');
-    assert.equal((await fetchJson(`${url}/accounts/${hunterAddr}`)).balance, (10n * ONE + BOUNTY - 2n * FEE).toString());
+    assert.equal((await fetchJson(`${url}/accounts/${hunterAddr}`)).balance, (100n * ONE + BOUNTY - 2n * FEE).toString()); // deposit refunded with the bounty
   } finally {
     await node.stop();
   }
+});
+
+test('a commitment locks a deposit: refunded with the bounty, forfeited to the pool if it lapses', () => {
+  const ctx = setup({ tripwireExtra: { commitTtlBlocks: 3 } });
+  const deposit = ctx.chain.tripwire.commitDeposit;
+  const poolBefore = ctx.chain.state.canary.pool;
+  const before = ctx.chain.state.get(ctx.addr(ctx.thief)).balance;
+  // A junk commitment that is never revealed.
+  assert.equal(ctx.chain.addTx(commitTx(ctx, ctx.thief, 'ecc-256', 'abc')).ok, true);
+  finalize(ctx);
+  assert.equal(ctx.chain.state.get(ctx.addr(ctx.thief)).balance, before - deposit - FEE, 'the deposit is locked');
+  for (let i = 0; i < 3; i++) finalize(ctx);
+  assert.equal(Object.keys(ctx.chain.state.canary.commits).length, 0, 'the lapsed commitment is gone from the state');
+  assert.equal(ctx.chain.state.canary.pool, poolBefore + deposit, 'its deposit went to the bounty pool');
 });
