@@ -5,6 +5,7 @@ type: software
 authors:
   - family-names: Pillas
     given-names: Ryan Paul G.
+    orcid: "https://orcid.org/0009-0005-1726-7320"
 version: "0.2"
 date-released: "2026-10-28"
 license: Apache-2.0
