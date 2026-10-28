@@ -77,3 +77,13 @@ blocks to different validators. The suite passed 16 runs in a row.
 
 Do not sell ARGENI, give it out for value, or launch a public mainnet until the legal checklist
 (SEC, BSP, AMLC) is cleared. See `argeni-backend/docs/ARGENI-LEGAL-TODO.pdf`.
+
+## ARGENI Tripwire (paper)
+
+The Q-Day Tripwire in `src/tripwire.js` is described in *The ARGENI Tripwire: Ownerless Bait Keys as a
+Consensus-Level Q-Day Alarm* (Ryan Paul G. Pillas, 2026). Reference implementation: release tag
+`argeni-tripwire-v0.2`. To cite it, use `CITATION.cff`.
+
+## License
+
+Apache License 2.0 (see `LICENSE` and `NOTICE`). The name ARGENI and the logo are not covered by the licence.

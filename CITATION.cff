@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+title: "The ARGENI Tripwire: Ownerless Bait Keys as a Consensus-Level Q-Day Alarm (reference implementation)"
+message: "If you use or build on the ARGENI Tripwire, please cite it as below."
+type: software
+authors:
+  - family-names: Pillas
+    given-names: Ryan Paul G.
+version: "0.2"
+date-released: "2026-10-28"
+license: Apache-2.0
+keywords:
+  - post-quantum cryptography
+  - quantum canary
+  - Q-Day
+  - blockchain
+  - Shor's algorithm
+  - tripwire

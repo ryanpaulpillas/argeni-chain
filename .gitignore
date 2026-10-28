@@ -5,3 +5,4 @@ testnet/
 argeni-bundle*
 devnet-backup*/
 legal/
+.DS_Store
