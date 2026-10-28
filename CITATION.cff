@@ -9,6 +9,13 @@ version: "0.2"
 date-released: "2026-10-28"
 license: Apache-2.0
 repository-code: "https://github.com/ryanpaulpillas/argeni-chain"
+abstract: >-
+  Reference implementation of the ARGENI Tripwire, a consensus-level alarm for the day classical
+  public-key cryptography is broken. The chain holds a ladder of ownerless bait keys (elliptic curves
+  of 160 to 256 bits, including secp256k1, plus the RSA-2048 Challenge modulus), each with a bounty.
+  Claims use commit-reveal; a verified break raises the chain's alert level and brings forward or
+  enforces the retirement of classical signatures, leaving vulnerable accounts able only to migrate
+  to post-quantum keys. Part of the ARGENI post-quantum blockchain (ML-DSA, SLH-DSA, ML-KEM, BFT).
 keywords:
   - post-quantum cryptography
   - quantum canary
