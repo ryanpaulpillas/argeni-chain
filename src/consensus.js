@@ -52,7 +52,8 @@ export class Consensus {
   }
 
   status() {
-    return { height: this.height, round: this.round, step: this.step, lockedRound: this.lockedRound, validator: this.member };
+    const votes = this.votes ? { prevotes: this.#total('prevote', this.round), precommits: this.#total('precommit', this.round), quorum: this.q } : null;
+    return { height: this.height, round: this.round, step: this.step, lockedRound: this.lockedRound, validator: this.member, votes };
   }
 
   // Entry point for messages from peers. Returns { ok, ahead } or { ok: false, error }.
@@ -154,7 +155,26 @@ export class Consensus {
         }
       });
     }
+    this.#scheduleStallCheck(round);
     this.#evaluate();
+  }
+
+  // Validators restarted together resume in the rounds they last signed, which can differ. With one
+  // validator offline, no round then gathers a quorum and the f + 1 catch-up rule never fires. If a
+  // round has stalled well past its timeouts and another validator is in a later round, step one round
+  // towards it (one at a time, so a faulty validator signing a huge round can't inflate everyone's
+  // timeouts). Changing rounds never affects safety, which rests on the locking rules.
+  #scheduleStallCheck(round) {
+    const { height } = this;
+    this.#schedule(this.#timeout(8, round), () => {
+      if (this.height !== height || this.round !== round || this.step === 'wait') return;
+      if (this.#highestRoundSeen() > round) {
+        this.log(`round ${round} stalled at height ${height}; another validator is ahead, moving to round ${round + 1}`);
+        this.#startRound(round + 1);
+      } else {
+        this.#scheduleStallCheck(round);
+      }
+    });
   }
 
   // ---- the decision rules; re-run after every message and timeout ----
@@ -362,6 +382,13 @@ export class Consensus {
   }
 
   // Timeouts grow with the round so a slow network eventually gets enough time.
+  #highestRoundSeen() {
+    let highest = this.round;
+    for (const p of this.proposals.values()) highest = Math.max(highest, p.round);
+    for (const type of VOTE_TYPES) for (const round of this.votes[type].keys()) highest = Math.max(highest, round);
+    return highest;
+  }
+
   #timeout(multiple, round) {
     return this.blockTimeMs * multiple + Math.floor((this.blockTimeMs * round) / 2);
   }

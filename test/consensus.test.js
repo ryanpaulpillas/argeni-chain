@@ -30,7 +30,7 @@ class Network {
   }
 }
 
-function makeNet(n, networkOptions, genesisExtra = {}) {
+function makeNet(n, networkOptions, genesisExtra = {}, signLogs = []) {
   const keys = Array.from({ length: n }, generateKeyPair);
   const faucet = generateKeyPair();
   const genesis = {
@@ -47,9 +47,9 @@ function makeNet(n, networkOptions, genesisExtra = {}) {
     ...genesisExtra,
   };
   const net = new Network(networkOptions);
-  const nodes = keys.map((key) => {
+  const nodes = keys.map((key, i) => {
     const chain = new Chain(genesis);
-    const consensus = new Consensus({ chain, privateKey: key.privateKey, broadcast: (msg) => net.send(key.publicKey, msg) });
+    const consensus = new Consensus({ chain, privateKey: key.privateKey, broadcast: (msg) => net.send(key.publicKey, msg), ...(signLogs[i] && { signLog: signLogs[i] }) });
     net.members.set(key.publicKey, consensus);
     return { key, chain, consensus };
   });
@@ -101,6 +101,24 @@ test('the chain keeps finalizing with one of four validators offline, including 
     const roundsUsed = new Set(live[0].chain.blocks.map((b) => b.commit.round));
     assert.ok(roundsUsed.has(1) || [...roundsUsed].some((r) => r > 0), 'a round change should skip the offline proposer');
     assert.equal(t.nodes[2].chain.height, 0);
+  } finally {
+    t.stop();
+  }
+});
+
+test('validators restarted in different rounds, with one offline, still reach a quorum', async () => {
+  // After a joint restart each validator resumes in the round it last signed: here 1, 1 and 2.
+  const resumedAt = (round) => {
+    let record = { height: 1, round, msgs: {} };
+    return { read: () => record, write: (r) => { record = r; } };
+  };
+  const t = makeNet(4, undefined, {}, [resumedAt(1), resumedAt(1), resumedAt(2)]);
+  t.net.down.add(t.keys[3].publicKey);
+  t.start();
+  try {
+    const live = t.nodes.slice(0, 3);
+    await waitFor(() => live.every((n) => n.chain.height >= 3));
+    assertAgreement(live);
   } finally {
     t.stop();
   }
