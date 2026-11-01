@@ -10,6 +10,7 @@ import { formatAmount, parseAmount } from './coin.js';
 import { writeKeyFile, readKeyFile, loadSigningKey, choosePassphrase, encryptKeyFile, decryptKeyFile, isEncrypted, askPassphrase } from './keyfile.js';
 import { Node, fetchJson } from './node.js';
 import { canaryCommitment, normalizeSolution, RUNG_IDS } from './tripwire.js';
+import { RWA_TYPES, assetIdFor } from './rwa.js';
 
 const DEFAULT_RPC = 'http://127.0.0.1:26601';
 
@@ -74,6 +75,15 @@ Q-Day Tripwire (bounties for proof that classical cryptography is broken)
                                               step 2, after the reveal delay: the chain checks the
                                               solution, pays the bounty and raises its alert level
                                               (rungs: ${RUNG_IDS.join(', ')}; rsa-2048 solution is "<p hex>.<q hex>")
+
+Real-world assets (ARS-1; every administrator key must be post-quantum)
+  asset list [--rpc <url>]                    list tokenized assets
+  asset show <assetId> [--rpc <url>]          one asset: roles, rules, documents, holders
+  asset holdings <address> [--rpc <url>]      an account's asset units and KYC entries
+  asset send --key <file> --tx <fields.json>  sign and send any ARS-1 transaction from a JSON file of
+                                              its fields, e.g. {"type":"asset-issue","assetId":"…",
+                                              "to":"ag…","amount":"100","docRef":"<sha256 of the document>"}
+                                              (types: ${RWA_TYPES.join(', ')})
 
 Default --rpc is ${DEFAULT_RPC}.`;
 
@@ -248,6 +258,29 @@ async function main(argv) {
       console.log(sub === 'commit'
         ? `committed a claim on ${values.rung} (only a hash is public)\nreveal after ${genesis.tripwire?.revealDelayBlocks ?? 10} blocks with: argeni canary reveal --key ${values.key} --rung ${values.rung} --solution <same>\ntx ${hash}`
         : `revealed the solution for ${values.rung}; if it is valid the bounty is paid in the next block\ntx ${hash}`);
+      return;
+    }
+    case 'asset': {
+      const sub = positionals[0];
+      if (sub === 'list') {
+        const { assets } = await fetchJson(`${rpc}/assets`);
+        if (!assets.length) console.log('no assets yet');
+        for (const a of assets) console.log(`${a.symbol.padEnd(12)} ${a.class.padEnd(12)} supply ${a.supply}/${a.maxSupply}  holders ${a.holders}  admin keys ${a.adminKeys}${a.paused ? '  PAUSED' : ''}\n  ${a.assetId}  ${a.name}`);
+        return;
+      }
+      if (sub === 'show' || sub === 'holdings') {
+        if (!positionals[1]) throw new Error(`usage: argeni asset ${sub} <${sub === 'show' ? 'assetId' : 'address'}>`);
+        console.log(JSON.stringify(await fetchJson(`${rpc}/${sub === 'show' ? 'assets' : 'accounts'}/${positionals[1]}${sub === 'holdings' ? '/assets' : ''}`), null, 2));
+        return;
+      }
+      if (sub !== 'send') throw new Error('usage: argeni asset list|show|holdings|send');
+      if (!values.key || !values.tx) throw new Error('--key and --tx <fields.json> are required');
+      const fields = JSON.parse(fs.readFileSync(values.tx, 'utf8'));
+      if (!RWA_TYPES.includes(fields.type)) throw new Error(`"type" must be one of: ${RWA_TYPES.join(', ')}`);
+      for (const k of ['chainId', 'from', 'fee', 'nonce', 'signature']) delete fields[k]; // filled in here
+      const { hash, genesis, tx } = await signAndSend(rpc, values.key, fields);
+      console.log(`sent ${fields.type}\ntx ${hash}`);
+      if (fields.type === 'asset-create') console.log(`assetId ${assetIdFor(genesis.chainId, addressFromPublicKey(tx.from), fields.symbol)}`);
       return;
     }
     case 'status': {

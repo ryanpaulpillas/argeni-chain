@@ -13,10 +13,12 @@
 //   evidence  two conflicting signed votes from one validator; it is slashed and banned
 //   canary-commit / canary-reveal   claim a Q-Day Tripwire bounty: commit to a hash of the solution,
 //             then reveal it; a valid break raises the chain's alert level (see tripwire.js)
+//   asset-* / kyc-*   ARS-1 real-world asset tokens with compliance enforced by consensus (see rwa.js)
 // Any of them can come from a multisig account ("msig:m:key,…", m of the keys sign).
 import { canonical, hashObject, sha256, sign, verify, isAddress, isHex, isPublicKey, keyTypeOf, publicKeyFromPrivate, addressFromPublicKey, PQ_KEY_TYPES } from './crypto.js';
 import { isUnits } from './coin.js';
 import { RUNGS, normalizeSolution } from './tripwire.js';
+import { RWA_FIELDS, checkRwaTx } from './rwa.js';
 
 export const MAX_MEMO_LENGTH = 256;
 export const MAX_VESTING_MONTHS = 120;
@@ -41,6 +43,7 @@ const FIELDS = {
   // Q-Day Tripwire claim: first a hash of (chain, rung, claimer, solution), then the solution itself.
   'canary-commit': [...ENVELOPE, 'commitment'],
   'canary-reveal': [...ENVELOPE, 'rung', 'solution'],
+  ...RWA_FIELDS,
 };
 export const TX_TYPES = Object.keys(FIELDS);
 const VOTE_FIELDS = ['type', 'height', 'round', 'blockHash', 'validRound', 'validator', 'signature'];
@@ -208,8 +211,11 @@ export function checkTx(tx, { chainId, minFee }, { voteBytes } = {}) {
       if (!verify(voteBytes(a), a.signature, a.validator) || !verify(voteBytes(b), b.signature, b.validator)) return 'evidence has an invalid vote signature';
       break;
     }
-    default:
-      return 'unsupported transaction type';
+    default: {
+      if (!Object.hasOwn(RWA_FIELDS, tx.type)) return 'unsupported transaction type';
+      const error = checkRwaTx(tx);
+      if (error) return error;
+    }
   }
   if (!verify(bytes, tx.signature, tx.from)) return 'invalid signature';
   return null;

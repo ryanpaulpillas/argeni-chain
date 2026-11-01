@@ -422,7 +422,8 @@ export class Chain {
       const hash = txHash(tx);
       this.txIndex.set(hash, block.header.height);
       const to = tx.type === 'migrate' ? addressFromPublicKey(tx.to) : tx.validator ? addressFromPublicKey(tx.validator) : tx.type === 'evidence' ? addressFromPublicKey(tx.voteA.validator) : tx.to;
-      for (const address of new Set([addressFromPublicKey(tx.from), to].filter(Boolean))) {
+      // tx.holder and tx.address: the investor an asset admin action concerns (ARS-1), so it shows in their history.
+      for (const address of new Set([addressFromPublicKey(tx.from), to, tx.holder, tx.address].filter(Boolean))) {
         if (!this.addressIndex.has(address)) this.addressIndex.set(address, []);
         this.addressIndex.get(address).push(hash);
       }

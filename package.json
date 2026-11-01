@@ -15,6 +15,7 @@
     "devnet": "node scripts/run-devnet.js",
     "node": "node src/cli.js node",
     "demo": "node scripts/demo-traffic.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "demo:rwa": "node scripts/demo-rwa.js"
   }
 }

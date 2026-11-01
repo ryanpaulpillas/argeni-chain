@@ -14,9 +14,13 @@
 // retire }. pool is the bounty ARGENI not yet paid (counted in supply); commits maps a claim
 // commitment to the block it was made in; broken maps a rung to { height, by }; retire maps a key
 // type to the block height from which the tripwire retired it.
+//
+// Real-world assets (ARS-1, see rwa.js): rwa = { assets, balances, kyc }, created by the first asset
+// transaction and part of the state root from then on.
 import { addressFromPublicKey, hashObject, keyTypeOf, sha256 } from './crypto.js';
 import { migrationCommitment } from './tx.js';
 import { bountyPool, canaryCommitment, checkSolution, retirementFor } from './tripwire.js';
+import { RWA_TYPES, applyRwaTx, emptyRwa, isEmptyRwa, migrateRwa } from './rwa.js';
 
 // Average Gregorian month, so "12 months" means one year of block time.
 export const MONTH_MS = 2_629_746_000;
@@ -101,8 +105,9 @@ export function migrationError(account, tx, { height, retiredAt = () => undefine
 }
 
 export class State {
-  constructor(accounts = new Map(), supply = 0n, validators = [], banned = new Set(), rewardPool = 0n, rewardsPaid = 0n, canary = null) {
+  constructor(accounts = new Map(), supply = 0n, validators = [], banned = new Set(), rewardPool = 0n, rewardsPaid = 0n, canary = null, rwa = null) {
     this.canary = canary;
+    this.rwa = rwa;
     this.accounts = accounts;
     this.supply = supply;
     this.validators = validators;
@@ -136,7 +141,7 @@ export class State {
   clone() {
     const copy = new Map();
     for (const [address, account] of this.accounts) copy.set(address, { ...account });
-    return new State(copy, this.supply, this.validators.map((v) => ({ ...v })), new Set(this.banned), this.rewardPool, this.rewardsPaid, cloneCanary(this.canary));
+    return new State(copy, this.supply, this.validators.map((v) => ({ ...v })), new Set(this.banned), this.rewardPool, this.rewardsPaid, cloneCanary(this.canary), this.rwa && structuredClone(this.rwa));
   }
 
   get(address) {
@@ -286,6 +291,7 @@ export class State {
           if (v.owner === from) v.owner = target;
           if (v.operator === from) v.operator = target;
         }
+        if (this.rwa) migrateRwa(this.rwa, from, target); // asset units, KYC entries and asset roles too
         return;
       }
 
@@ -396,8 +402,13 @@ export class State {
         return;
       }
 
-      default:
-        throw new Error('unsupported transaction type');
+      default: {
+        if (!RWA_TYPES.includes(tx.type)) throw new Error('unsupported transaction type');
+        if (this.spendable(from, t) < fee) throw new Error('insufficient balance for the fee');
+        this.rwa ??= emptyRwa();
+        applyRwaTx(this.rwa, tx, from, { height: ctx.height, chainId: ctx.chainId, isMigrated: (a) => Boolean(this.get(a).migratedTo) });
+        spend(0n, 'insufficient balance for the fee'); // asset fees are always paid in ARGENI
+      }
     }
   }
 
@@ -416,6 +427,7 @@ export class State {
       supply: this.supply.toString(), accounts: entries, validators, banned: [...this.banned].map((k) => sha256(k)).sort(),
       rewards: [this.rewardPool.toString(), this.rewardsPaid.toString()],
       ...(this.canary ? { canary: { ...this.canary, pool: this.canary.pool.toString() } } : {}),
+      ...(isEmptyRwa(this.rwa) ? {} : { rwa: this.rwa }),
     });
   }
 
@@ -429,6 +441,7 @@ export class State {
       rewardPool: this.rewardPool.toString(),
       rewardsPaid: this.rewardsPaid.toString(),
       ...(this.canary ? { canary: { ...this.canary, pool: this.canary.pool.toString() } } : {}),
+      ...(this.rwa ? { rwa: this.rwa } : {}),
     };
   }
 
@@ -441,6 +454,7 @@ export class State {
       BigInt(json.rewardPool ?? '0'),
       BigInt(json.rewardsPaid ?? '0'),
       json.canary ? { ...cloneCanary({ ...json.canary, pool: 0n }), pool: BigInt(json.canary.pool) } : null,
+      json.rwa ? structuredClone(json.rwa) : null,
     );
   }
 }

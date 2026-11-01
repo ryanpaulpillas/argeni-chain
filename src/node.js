@@ -9,6 +9,7 @@ import { createHello, acceptHello, completeHello, SESSION_MAX_AGE_MS } from './p
 import { createTransfer, createTx, txHash } from './tx.js';
 import { formatAmount, parseAmount } from './coin.js';
 import { RUNG_IDS, LEVEL_NAMES, alertLevel, rungInfo } from './tripwire.js';
+import { assetView } from './rwa.js';
 import { totalLocked, vestingEnd } from './state.js';
 
 // Post-quantum (ML-DSA-65) signatures are ~3.3 KB each, so blocks and proposals can be a few MB.
@@ -448,6 +449,27 @@ export class Node {
           broken: canary.broken[id] ?? null,
         })),
       });
+    }
+    // ARS-1 real-world assets: the list, one asset with its holders, and an account's holdings.
+    if (parts[0] === 'assets' && parts.length <= 2) {
+      const rwa = chain.state.rwa;
+      if (parts.length === 2) {
+        const view = assetView(rwa, parts[1]);
+        return view ? send(res, 200, view) : send(res, 404, { error: 'unknown asset' });
+      }
+      const assets = Object.values(rwa?.assets ?? {}).map(({ assetId, symbol, name, class: cls, supply, maxSupply, holders, paused, roles, rules, legal }) => ({
+        assetId, symbol, name, class: cls, supply, maxSupply, holders, paused, issuer: roles.issuer, adminKeys: rules.adminKeys, offering: legal.offering,
+      }));
+      return send(res, 200, { count: assets.length, assets });
+    }
+    if (parts[0] === 'accounts' && parts.length === 3 && parts[2] === 'assets') {
+      if (!isAddress(parts[1])) return send(res, 400, { error: 'invalid address' });
+      const rwa = chain.state.rwa;
+      const holdings = Object.entries(rwa?.balances ?? {})
+        .filter(([, bals]) => bals[parts[1]])
+        .map(([assetId, bals]) => ({ assetId, symbol: rwa.assets[assetId].symbol, balance: bals[parts[1]].balance, frozen: Boolean(bals[parts[1]].frozen) }));
+      const kyc = Object.entries(rwa?.kyc ?? {}).filter(([, reg]) => reg[parts[1]]).map(([compliance, reg]) => ({ compliance, ...reg[parts[1]] }));
+      return send(res, 200, { address: parts[1], holdings, kyc });
     }
     if (parts[0] === 'snapshot' && parts.length === 1) {
       if (!query.has('height')) return send(res, 200, { heights: [...this.snapshots.keys()], every: this.snapshotEvery });
