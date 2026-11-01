@@ -207,6 +207,17 @@ async function main(argv) {
         trustedBlock: config.trustedBlock ?? null,
         publicUrl: config.publicUrl ?? null,
       });
+      // Node.js 24's built-in fetch (undici) can throw setTypeOfService EINVAL from a socket callback
+      // when a peer connection closes mid-request; nothing can catch it, and it would stop the validator.
+      // That one failure only loses a single request, so log it and carry on; anything else still exits.
+      process.on('uncaughtException', (err) => {
+        if (err?.syscall === 'setTypeOfService') {
+          console.error(`ignored a peer socket error: ${err.message}`);
+          return;
+        }
+        console.error(err);
+        process.exit(1);
+      });
       await node.start();
       const shutdown = () => node.stop().then(() => process.exit(0));
       process.on('SIGINT', shutdown);
