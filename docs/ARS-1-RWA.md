@@ -186,7 +186,7 @@ holder in one block.
   "decimals": 0,
   "maxSupply": "100000",
   "roles": { "issuer": "cy…spv", "compliance": "cy…casp", "recovery": "cy…agent", "attestor": "cy…appraiser" },
-  "legal": { "entity": "Pilot Property Holdings Inc.", "secRegNo": "TO CONFIRM", "offering": "stratbox", "jurisdiction": "PH", "docsHash": "…", "docsUri": "https://cyvber.io/assets/PHRE1" },
+  "legal": { "entity": "Pilot Property Holdings Inc.", "secRegNo": "TO CONFIRM", "offering": "stratbox", "jurisdiction": "PH", "docsHash": "…", "docsUri": "https://cyvber.com/assets/PHRE1" },
   "rules": { "kycRequired": true, "investorClasses": ["qualified"], "allowedCountries": ["*"], "foreignCapBps": 4000, "maxHolders": 200, "lockupUntilHeight": 0, "minHoldingUnits": "1", "redeemable": false }
 }
 ```

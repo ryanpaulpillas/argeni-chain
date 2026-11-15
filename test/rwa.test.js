@@ -65,7 +65,7 @@ function refused(ctx, key, fields, pattern) {
 }
 
 const RULES = { kycRequired: true, investorClasses: ['qualified'], allowedCountries: ['*'], foreignCapBps: 4000, maxHolders: 200, lockupUntilHeight: 0, minHoldingUnits: '1', redeemable: false };
-const LEGAL = { entity: 'Pilot Property Holdings Inc.', secRegNo: 'TEST-0001', offering: 'pilot', jurisdiction: 'PH', docsHash: DOC, docsUri: 'https://cyvber.io/assets/PHRE1' };
+const LEGAL = { entity: 'Pilot Property Holdings Inc.', secRegNo: 'TEST-0001', offering: 'pilot', jurisdiction: 'PH', docsHash: DOC, docsUri: 'https://cyvber.com/assets/PHRE1' };
 
 function createAsset(ctx, { issuer = ctx.k.issuer, symbol = 'PHRE1', rules = {}, maxSupply = '1000' } = {}) {
   const roles = { compliance: ctx.addr(ctx.k.compliance), recovery: ctx.addr(ctx.k.recovery), attestor: ctx.addr(ctx.k.attestor) };
@@ -95,7 +95,7 @@ test('an asset is created, investors are verified, units are issued and traded, 
   assert.equal(asset(ctx, id).supply, '100');
   assert.equal(asset(ctx, id).holders, 2);
   assert.equal(ctx.chain.state.get(ctx.addr(ctx.k.alice)).balance, cyvberBefore - FEE, 'the transfer fee is paid in CYVBER');
-  ok(ctx, ctx.k.attestor, { type: 'asset-attest', assetId: id, kind: 'appraisal', valueHash: H('appraisal report'), uri: 'https://cyvber.io/assets/PHRE1/appraisal' });
+  ok(ctx, ctx.k.attestor, { type: 'asset-attest', assetId: id, kind: 'appraisal', valueHash: H('appraisal report'), uri: 'https://cyvber.com/assets/PHRE1/appraisal' });
   assert.equal(asset(ctx, id).lastAttestation.kind, 'appraisal');
   refused(ctx, ctx.k.issuer, { type: 'asset-issue', assetId: id, to: ctx.addr(ctx.k.alice), amount: 901n, docRef: H('x') }, /maximum supply/);
 });

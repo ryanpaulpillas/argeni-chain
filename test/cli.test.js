@@ -88,7 +88,7 @@ test('multisig, vesting and staking work from the command line; a new validator 
       snap = snapshots.at(-1);
       return snap && snap.height >= 3;
     });
-    // Like an outside operator who only knows rpc.cyvber.io: one peer, plus its own public URL,
+    // Like an outside operator who only knows rpc.cyvber.com: one peer, plus its own public URL,
     // which it announces; the rest of the network reaches it through relayed messages.
     joiner = new Node({ genesis, port: ports[4], peers: [urls[0]], publicUrl: urls[4], validatorKey: operator.privateKey, trustedBlock: snap, log: () => {} });
     await joiner.start();

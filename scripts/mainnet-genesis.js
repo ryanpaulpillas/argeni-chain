@@ -16,7 +16,7 @@ const DECIMALS = 18;
 const SUPPLY = 500_000_000n;
 const u = (n) => parseAmount(String(n), DECIMALS);
 
-// The plan published on cyvber.io (token page). Months count from launch.
+// The plan published on cyvber.com (token page). Months count from launch.
 export const PLAN = {
   ecosystem: { amount: 150_000_000n, atStart: 15_000_000n, lockMonths: 0, vestMonths: 36 }, // 30%
   treasury: { amount: 100_000_000n, lockMonths: 6, vestMonths: 48 }, // 20%: at most 5% of supply a year

@@ -1,7 +1,7 @@
 # Caddy gets and renews HTTPS certificates for these names automatically.
 # DNS for each name must point at this server before Caddy starts.
 
-cyvber.io, www.cyvber.io {
+cyvber.com, www.cyvber.com {
 	encode gzip
 	# The AI assistant (cyvber-assistant service); answers stream as server-sent events.
 	handle /api/assistant* {
@@ -21,11 +21,11 @@ cyvber.io, www.cyvber.io {
 }
 
 # Block explorer and JSON API, served by validator node 1.
-explorer.cyvber.io, rpc.cyvber.io {
+explorer.cyvber.com, rpc.cyvber.com {
 	encode gzip
 	reverse_proxy 127.0.0.1:26601
 }
 
-faucet.cyvber.io {
-	redir https://cyvber.io/#start
+faucet.cyvber.com {
+	redir https://cyvber.com/#start
 }

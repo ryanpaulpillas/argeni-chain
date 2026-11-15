@@ -104,6 +104,6 @@ echo "Node 1 status:"
 curl -s http://127.0.0.1:26601/status | head -c 400 || echo "(node not answering yet; check: journalctl -u cyvber-node@1 -n 50)"
 echo
 echo
-echo "Done. Open https://cyvber.io and https://explorer.cyvber.io"
+echo "Done. Open https://cyvber.com and https://explorer.cyvber.com"
 echo "(HTTPS certificates can take a minute; they need the GoDaddy DNS records to point here.)"
 echo "IMPORTANT: back up /opt/cyvber/testnet/keys somewhere private."

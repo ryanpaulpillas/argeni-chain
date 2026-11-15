@@ -47,7 +47,7 @@ const symbol = 'PHRE1';
 await send(issuer, {
   type: 'asset-create', symbol, name: 'Demo Makati Office Tower, Class A', class: 'real-estate', decimals: 0, maxSupply: '1000',
   roles: { compliance: compliance.address, recovery: recovery.address, attestor: attestor.address },
-  legal: { entity: 'Demo Property Holdings (example only)', secRegNo: 'DEMO-ONLY', offering: 'pilot', jurisdiction: 'PH', docsHash: sha256('demo offering documents'), docsUri: 'https://cyvber.io/demo/PHRE1' },
+  legal: { entity: 'Demo Property Holdings (example only)', secRegNo: 'DEMO-ONLY', offering: 'pilot', jurisdiction: 'PH', docsHash: sha256('demo offering documents'), docsUri: 'https://cyvber.com/demo/PHRE1' },
   rules: { kycRequired: true, investorClasses: ['qualified', 'institutional'], allowedCountries: ['*'], foreignCapBps: 4000, maxHolders: 200, lockupUntilHeight: 0, minHoldingUnits: '1', redeemable: false, adminKeys: 'hash-based' },
 });
 const assetId = assetIdFor(genesis.chainId, issuer.address, symbol);
@@ -56,7 +56,7 @@ await kyc(maria, 'PH', false);
 await kyc(kenji, 'JP', true);
 await send(issuer, { type: 'asset-issue', assetId, to: maria.address, amount: 600n, docRef: sha256('demo subscription Maria') });
 await send(issuer, { type: 'asset-issue', assetId, to: kenji.address, amount: 400n, docRef: sha256('demo subscription Kenji') });
-await send(attestor, { type: 'asset-attest', assetId, kind: 'appraisal', valueHash: sha256('demo appraisal report'), uri: 'https://cyvber.io/demo/PHRE1/appraisal' });
+await send(attestor, { type: 'asset-attest', assetId, kind: 'appraisal', valueHash: sha256('demo appraisal report'), uri: 'https://cyvber.com/demo/PHRE1/appraisal' });
 
 const asset = await fetchJson(`${RPC}/assets/${assetId}`);
 console.log(`\n${asset.symbol}: ${asset.supply}/${asset.maxSupply} units, ${asset.holders} holders, foreign share ${asset.foreignShareBps / 100}% (cap 40%), admin keys: ${asset.rules.adminKeys}`);

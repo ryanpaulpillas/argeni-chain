@@ -1,7 +1,7 @@
 # Putting the CYVBER testnet online
 
-This puts the website at **cyvber.io**, the explorer at **explorer.cyvber.io**, and the network's
-API at **rpc.cyvber.io**, all on one DigitalOcean server with automatic HTTPS. It takes about
+This puts the website at **cyvber.com**, the explorer at **explorer.cyvber.com**, and the network's
+API at **rpc.cyvber.com**, all on one DigitalOcean server with automatic HTTPS. It takes about
 45 minutes, most of it waiting.
 
 What you'll have afterwards: a public **testnet** with 4 post-quantum validators on one server.
@@ -54,7 +54,7 @@ Click **Create Droplet** and copy its **IPv4 address** (for example `203.0.113.2
 
 ## Part 3 · GoDaddy DNS
 
-**4.** In GoDaddy: **My Products → cyvber.io → DNS**. Add these records, all pointing at the
+**4.** In GoDaddy: **My Products → cyvber.com → DNS**. Add these records, all pointing at the
 server's IP:
 
 | Type | Name | Value | TTL |
@@ -66,11 +66,11 @@ server's IP:
 | A | `faucet` | *your server IP* | 1/2 hour |
 
 - If there is already an **A record for `@`** (often "Parked"), edit it to your IP instead of adding a second one.
-- If cyvber.io has **Forwarding** turned on, turn it off.
+- If cyvber.com has **Forwarding** turned on, turn it off.
 - If there is a **CNAME for `www`**, delete it before adding the A record.
-- Don't touch **MX** records if you use email on cyvber.io.
+- Don't touch **MX** records if you use email on cyvber.com.
 
-Wait 10–30 minutes, then check on [dnschecker.org](https://dnschecker.org) that `explorer.cyvber.io`
+Wait 10–30 minutes, then check on [dnschecker.org](https://dnschecker.org) that `explorer.cyvber.com`
 shows your IP.
 
 ## Part 4 · Install
@@ -122,7 +122,7 @@ help them; the validators themselves are never cut off. Check it with `node src/
 on the server (it lists blocked addresses there) or `GET /firewall`. Tune it with a `firewall`
 section in a node's config, e.g. `"firewall": { "rates": { "tx": 60 }, "allow": ["203.0.113.7"] }`.
 
-**9. Open** https://cyvber.io and https://explorer.cyvber.io. If HTTPS isn't ready yet, wait a
+**9. Open** https://cyvber.com and https://explorer.cyvber.com. If HTTPS isn't ready yet, wait a
 minute: the certificates are requested the first time.
 
 **10. Back up the server's keys** (run this on your Mac):
@@ -164,14 +164,14 @@ Independent operators join by staking; nobody needs to edit genesis.
    `node src/cli.js keygen --out validator.json` and `node src/cli.js keygen --out owner.json --encrypt`.
 2. They get at least the minimum stake (100,000 test CYVBER on the testnet) into the owner account.
 3. They start their node with a config like `node-1.json`, without `faucetKey`, with
-   `"peers": ["https://rpc.cyvber.io"]`, their own public HTTPS address as
+   `"peers": ["https://rpc.cyvber.com"]`, their own public HTTPS address as
    `"publicUrl": "https://node.their-domain.com"` (behind Caddy, like ours), and a trusted snapshot
    block so it doesn't replay the whole chain: `"trustedBlock": { "height": <h>, "hash": "<hash>" }`.
    On start the node announces its `publicUrl`, and the network passes consensus messages on to it;
    nobody has to edit our servers. Take `h` and `hash` from
-   `https://rpc.cyvber.io/status` (the `snapshots` list), ideally checked against the explorer.
+   `https://rpc.cyvber.com/status` (the `snapshots` list), ideally checked against the explorer.
 4. Once their node has caught up, they stake in:
-   `node src/cli.js stake join --key owner.json --validator-key validator.json --amount 100000 --rpc https://rpc.cyvber.io`
+   `node src/cli.js stake join --key owner.json --validator-key validator.json --amount 100000 --rpc https://rpc.cyvber.com`
 
 From the next block on, the new validator must sign. Missing 500 blocks in a row costs 0.1% of
 the stake and a day out of the set; signing two different blocks costs 5% and a permanent ban.

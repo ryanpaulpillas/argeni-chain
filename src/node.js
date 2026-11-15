@@ -623,7 +623,7 @@ export class Node {
   }
 
   // Every validator's view of the chain, gathered by this node from its peers, so a browser that can
-  // only reach this node (e.g. through rpc.cyvber.io) can still see which validators are online.
+  // only reach this node (e.g. through rpc.cyvber.com) can still see which validators are online.
   async #network() {
     if (this.networkCache && Date.now() - this.networkCache.at < 2000) return this.networkCache.value;
     const summarize = (s) => s && { validator: s.self, height: s.height, consensus: s.consensus };
@@ -684,7 +684,7 @@ export class Node {
     }
     if (parts[0] === 'consensus' && parts.length === 1) {
       // Valid messages seen for the first time are passed on to our peers, so validators that are
-      // not directly connected (e.g. an outside validator that only knows rpc.cyvber.io) still hear
+      // not directly connected (e.g. an outside validator that only knows rpc.cyvber.com) still hear
       // each other.
       const id = typeof body?.signature === 'string' ? `${body.type}:${body.signature.slice(0, 128)}` : body?.type === 'commit' ? `commit:${body.block?.hash}` : null;
       if (id && this.relayed.has(id)) return send(res, 200, { ok: true, known: true });
