@@ -1,7 +1,7 @@
 # CYVBER chain
 
 The Argeni blockchain, built from scratch in Node.js with no dependencies.
-Native coin: **ARGENI** (18 decimals), fixed supply of **500,000,000**.
+Native coin: **CYVBER** (18 decimals), fixed supply of **500,000,000**.
 Status: **devnet / testnet only**, not for real value.
 
 ## Quick start
@@ -16,7 +16,7 @@ In another terminal:
 
 ```bash
 node src/cli.js keygen --out my-wallet.json
-node src/cli.js faucet <your address>            # 100 test ARGENI from node 1
+node src/cli.js faucet <your address>            # 100 test CYVBER from node 1
 node src/cli.js balance <your address>
 node src/cli.js send --key my-wallet.json --to <address> --amount 10
 node src/cli.js status
@@ -44,8 +44,8 @@ Public testnet: see [deploy/DEPLOY.md](deploy/DEPLOY.md) (DigitalOcean + GoDaddy
 | Transactions | Signed transfers with amount, fee, nonce and optional memo, plus `pq-commit` and `migrate`. Nonce prevents replay; chainId prevents cross-chain replay. |
 | Blocks | Header with height, timestamp, previous hash, Merkle root of transactions, state root and proposer, plus a commit certificate: precommit signatures from more than two thirds of validators. |
 | Consensus | BFT, following the Tendermint algorithm (`src/consensus.js`): propose, prevote, precommit, with locking and round changes. Blocks are final once committed; no reorgs. With n validators it tolerates f = floor((n-1)/3) faulty or offline ones (4 validators tolerate 1). Below quorum the chain pauses rather than forks. |
-| Supply | `maxSupply` is enforced: genesis allocations cannot exceed it and minting stops at it. Devnet: all 500,000,000 ARGENI exist at genesis (499M treasury, 1M faucet), `blockReward` 0. |
-| Q-Day Tripwire | Optional `genesis.tripwire` (`src/tripwire.js`). A ladder of bait keys nobody owns: points hashed onto secp160r1, P-192, P-224, P-256 and secp256k1 from the public seed `ARGENI Q-Day Tripwire v1`, plus the RSA-2048 Challenge number. Each carries a bounty from the fixed supply. A claim is `canary-commit` (hash of chain, rung, claimer and solution), then `canary-reveal` at least `revealDelayBlocks` later (a commitment locks a refundable deposit, default 10 ARGENI, and lapses after `commitTtlBlocks`, its deposit going to the bounty pool); the chain checks d·G = P (or p·q = N), pays the bounty and raises its alert level. Level 1 (ECC-160/192): recorded only. Level 2 (ECC-224 or RSA-2048): the Ed25519 sunset moves to `graceBlocks` from now (default about 30 days). Level 3 (a 256-bit curve): Ed25519 is retired from the next block, and classical accounts can only migrate under the post-sunset rules. A tripwire can only bring a planned sunset earlier. `GET /tripwire` and `argeni canary ladder` show the ladder. |
+| Supply | `maxSupply` is enforced: genesis allocations cannot exceed it and minting stops at it. Devnet: all 500,000,000 CYVBER exist at genesis (499M treasury, 1M faucet), `blockReward` 0. |
+| Q-Day Tripwire | Optional `genesis.tripwire` (`src/tripwire.js`). A ladder of bait keys nobody owns: points hashed onto secp160r1, P-192, P-224, P-256 and secp256k1 from the public seed `CYVBER Q-Day Tripwire v1`, plus the RSA-2048 Challenge number. Each carries a bounty from the fixed supply. A claim is `canary-commit` (hash of chain, rung, claimer and solution), then `canary-reveal` at least `revealDelayBlocks` later (a commitment locks a refundable deposit, default 10 CYVBER, and lapses after `commitTtlBlocks`, its deposit going to the bounty pool); the chain checks d·G = P (or p·q = N), pays the bounty and raises its alert level. Level 1 (ECC-160/192): recorded only. Level 2 (ECC-224 or RSA-2048): the Ed25519 sunset moves to `graceBlocks` from now (default about 30 days). Level 3 (a 256-bit curve): Ed25519 is retired from the next block, and classical accounts can only migrate under the post-sunset rules. A tripwire can only bring a planned sunset earlier. `GET /tripwire` and `argeni canary ladder` show the ladder. |
 | Fees | Fees go to the block proposer. |
 | Idle chain | With `emptyBlockIntervalMs` in genesis, validators wait for transactions instead of making an empty block every `blockTimeMs`, with a heartbeat block at that interval. |
 | Public-node limits | Node config `trustProxy`, `faucetAddressCooldownMs`, `faucetIpCooldownMs`, `txsPerMinutePerIp`. |
@@ -69,21 +69,21 @@ blocks to different validators. The suite passed 16 runs in a row.
 - **Validator set changes / staking.** Validators are fixed in genesis, with equal voting power.
 - **Slashing.** Double-signing is ignored (first vote kept) but not punished.
 - **Peer-to-peer layer.** Node links are encrypted and authenticated (ML-KEM-768 key exchange, ML-DSA identities, AES-256-GCM; see `src/p2p.js`). Discovery is by announcement to known peers only.
-- **Smart contracts.** Only ARGENI transfers exist.
+- **Smart contracts.** Only CYVBER transfers exist.
 - **Peer authentication, rate limiting and DoS protection** on the HTTP API.
 - **Efficient storage.** State is in memory and rebuilt on start; the state root is recomputed in full each block.
 - **Tokenomics.** Supply is fixed at 500 million; how it is split (team, ecosystem, sale, reserve, vesting) and the mainnet fee level are not decided.
 - **Independent security audit.**
 
-Do not sell ARGENI, give it out for value, or launch a public mainnet until the legal checklist
+Do not sell CYVBER, give it out for value, or launch a public mainnet until the legal checklist
 (SEC, BSP, AMLC) is cleared. See `argeni-backend/docs/ARGENI-LEGAL-TODO.pdf`.
 
-## ARGENI Tripwire (paper)
+## CYVBER Tripwire (paper)
 
-The Q-Day Tripwire in `src/tripwire.js` is described in *The ARGENI Tripwire: Ownerless Bait Keys as a
+The Q-Day Tripwire in `src/tripwire.js` is described in *The CYVBER Tripwire: Ownerless Bait Keys as a
 Consensus-Level Q-Day Alarm* (Ryan Paul G. Pillas, 2026). Reference implementation: release tag
 `argeni-tripwire-v0.2`. To cite it, use `CITATION.cff`.
 
 ## License
 
-Apache License 2.0 (see `LICENSE` and `NOTICE`). The name ARGENI and the logo are not covered by the licence.
+Apache License 2.0 (see `LICENSE` and `NOTICE`). The name CYVBER and the logo are not covered by the licence.
