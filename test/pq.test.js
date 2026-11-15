@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { Chain, quorum, voteSignBytes } from '../src/chain.js';
 import { Consensus } from '../src/consensus.js';
 import { addressFromPublicKey, generateKeyPair, keyTypeOf, sign, verify } from '../src/crypto.js';
-import { createMigration, createMigrationCommit, createTransfer, checkTx } from '../src/tx.js';
+import { createMigration, createMigrationCommit, createTransfer, createTx, checkTx, migrationRevealCommitment } from '../src/tx.js';
+import { MIGRATE_REVEAL_DELAY } from '../src/state.js';
 
 const ONE = 10n ** 18n;
 const BILLION = 1_000_000_000n * ONE;
@@ -149,7 +150,7 @@ test('a quantum attacker holding the old key cannot redirect a committed migrati
   assert.equal(ctx.chain.state.get(addressFromPublicKey(owner.publicKey)).balance, 100n * ONE - 2n * FEE);
 });
 
-test('after the sunset an exposed key without a commitment cannot migrate; a never-used key can', () => {
+test('after the sunset an exposed key without a commitment cannot migrate; a never-used key can, after a hidden migrate-commit', () => {
   const ctx = setup({ sunset: 2 });
   const unused = generateKeyPair('ed25519');
   assert.equal(ctx.chain.addTx(transfer(ctx, ctx.pq, addressFromPublicKey(unused.publicKey), 5n * ONE, 0)).ok, true);
@@ -157,9 +158,25 @@ test('after the sunset an exposed key without a commitment cannot migrate; a nev
   finalize(ctx); // height 1
   assert.match(ctx.chain.addTx(migration(ctx, ctx.legacy, generateKeyPair('ml-dsa-65'), 1)).error, /was exposed and it made no migration commitment before block 2/);
   const fresh = generateKeyPair('ml-dsa-65');
-  assert.equal(ctx.chain.addTx(migration(ctx, unused, fresh, 0)).ok, true, 'its public key was never published');
+  const freshAddr = addressFromPublicKey(fresh.publicKey);
+  // Migrating straight away would reveal the public key in the mempool with nothing to stop a racer.
+  assert.match(ctx.chain.addTx(migration(ctx, unused, fresh, 0)).error, /must first send a migrate-commit/);
+  // The hash commits the hidden public key to the new address; any funded account can send it.
+  const hidden = migrationRevealCommitment(ctx.genesis.chainId, unused.publicKey, freshAddr);
+  const mc = createTx({ type: 'migrate-commit', chainId: ctx.genesis.chainId, fee: FEE, nonce: ctx.chain.pendingNonce(ctx.pqAddr), commitment: hidden }, { privateKey: ctx.pq.privateKey });
+  assert.equal(ctx.chain.addTx(mc).ok, true);
+  finalize(ctx); // committed at height 2
+  assert.match(ctx.chain.addTx(migration(ctx, unused, fresh, 0)).error, /too early/);
+  // An attacker who only knows the address can't commit for this account; and one who learns the public
+  // key from the migration commits too late, because the first commitment is the one that counts.
+  const thief = generateKeyPair('ml-dsa-65');
+  const wrong = migrationRevealCommitment(ctx.genesis.chainId, unused.publicKey, addressFromPublicKey(thief.publicKey));
+  assert.notEqual(wrong, hidden);
+  for (let i = 0; i < MIGRATE_REVEAL_DELAY; i++) finalize(ctx);
+  assert.equal(ctx.chain.addTx(migration(ctx, unused, fresh, 0)).ok, true, 'its public key was never published before');
   finalize(ctx);
-  assert.equal(ctx.chain.state.get(addressFromPublicKey(fresh.publicKey)).balance, 5n * ONE - FEE);
+  assert.equal(ctx.chain.state.get(freshAddr).balance, 5n * ONE - FEE);
+  assert.match(ctx.chain.addTx(migration(ctx, unused, thief, 1)).error, /migrated/, 'the old account is locked for good');
 });
 
 test('SLH-DSA-128s (hash-based, FIPS 205) keys sign, verify and send ARGENI', () => {

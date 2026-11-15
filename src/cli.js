@@ -5,7 +5,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { generateKeyPair, addressFromPublicKey, publicKeyFromPrivate, keyTypeOf, sign, multisigKey, parseMultisig, signMultisigPart, combineMultisig, KEY_TYPES, PQ_KEY_TYPES, DEFAULT_KEY_TYPE } from './crypto.js';
-import { createTransfer, createMigration, createMigrationCommit, createTx, signingBytes, validatorConsentBytes } from './tx.js';
+import { createTransfer, createMigration, createMigrationCommit, createTx, migrationRevealCommitment, signingBytes, validatorConsentBytes } from './tx.js';
 import { formatAmount, parseAmount } from './coin.js';
 import { writeKeyFile, readKeyFile, loadSigningKey, choosePassphrase, encryptKeyFile, decryptKeyFile, isEncrypted, askPassphrase } from './keyfile.js';
 import { Node, fetchJson } from './node.js';
@@ -29,6 +29,10 @@ const USAGE = `argeni <command> [options]
   balance <address> [--rpc <url>]             show an account balance
   send --key <file> --to <address> --amount <ARGENI> [--fee <ARGENI>] [--memo <text>] [--rpc <url>]
   faucet <address> [--rpc <url>]              request testnet ARGENI
+  migrate-commit --key <old key file> --new-key <post-quantum file> --payer <funded key file> [--rpc <url>]
+                                              after a key type is retired, a never-used account sends this
+                                              first (paid by --payer, so the old key stays hidden), then
+                                              runs migrate once the reveal delay has passed
   pq-commit --key <current key file> --new-key <post-quantum file> [--rpc <url>]
                                               lock in the key this account will migrate to
                                               (do this before its key type is retired)
@@ -156,6 +160,7 @@ async function main(argv) {
       'validator-pubkey': { type: 'string' },
       operator: { type: 'string' },
       request: { type: 'string' },
+      payer: { type: 'string' },
       rung: { type: 'string' },
       solution: { type: 'string' },
     },
@@ -335,6 +340,18 @@ async function main(argv) {
         body: JSON.stringify(tx),
       });
       console.log(`sent ${values.amount} ${symbol} to ${values.to} (fee ${formatAmount(tx.fee, decimals)})\ntx ${hash}`);
+      return;
+    }
+    case 'migrate-commit': {
+      if (!values.key || !values['new-key'] || !values.payer) throw new Error('--key, --new-key and --payer are required');
+      const oldKey = await loadSigningKey(values.key);
+      const newKey = await loadSigningKey(values['new-key']);
+      if (!PQ_KEY_TYPES.includes(keyTypeOf(newKey.publicKey))) throw new Error('--new-key must be a post-quantum key file');
+      if (values.payer === values.key) throw new Error('--payer must be a different account: signing with the old key would reveal it');
+      const genesis = await fetchJson(`${rpc}/genesis`);
+      const commitment = migrationRevealCommitment(genesis.chainId, oldKey.publicKey, addressFromPublicKey(newKey.publicKey));
+      const { hash } = await signAndSend(rpc, values.payer, { type: 'migrate-commit', commitment });
+      console.log(`sent migrate-commit (only a hash; the old public key is still hidden)\ntx ${hash}\nthen, after the reveal delay: argeni migrate --key ${values.key} --new-key ${values['new-key']}`);
       return;
     }
     case 'pq-commit': {

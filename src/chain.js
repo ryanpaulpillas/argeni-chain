@@ -228,7 +228,7 @@ export class Chain {
 
   // Inputs to the migration security rules (state.js migrationError) for a block at `height`.
   migrationPolicy(height) {
-    return { height, retiredAt: (type) => this.retiredAt(type) };
+    return { height, retiredAt: (type) => this.retiredAt(type), migrationCommits: this.state.migrationCommits };
   }
 
   #checkTx(tx, height) {

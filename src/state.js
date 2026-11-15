@@ -18,7 +18,7 @@
 // Real-world assets (ARS-1, see rwa.js): rwa = { assets, balances, kyc }, created by the first asset
 // transaction and part of the state root from then on.
 import { addressFromPublicKey, hashObject, keyTypeOf, sha256 } from './crypto.js';
-import { migrationCommitment } from './tx.js';
+import { migrationCommitment, migrationRevealCommitment } from './tx.js';
 import { bountyPool, canaryCommitment, checkSolution, retirementFor } from './tripwire.js';
 import { RWA_TYPES, applyRwaTx, emptyRwa, isEmptyRwa, migrateRwa } from './rwa.js';
 
@@ -88,8 +88,14 @@ export function vestingEnd(grant) {
 //    the funds: new commitments are refused after the sunset, and the old one can't be changed.
 //  - After its key type is retired, an account without a commitment can migrate only if its public
 //    key was never published (it never signed a transaction), so a quantum attacker had nothing to work on.
+//    It must first publish a migrate-commit (a hash binding its public key to the new address) at least
+//    `revealDelay` blocks earlier: the migration reveals the public key, and a fast enough attacker could
+//    otherwise derive the private key and race its own migration. A racer's commitment is always later.
 //  - A migration can't move funds onto a key type that is itself retired.
-export function migrationError(account, tx, { height, retiredAt = () => undefined } = {}) {
+export const MIGRATE_REVEAL_DELAY = 10;
+export const MIGRATE_COMMIT_TTL = 100_000; // blocks a migrate-commit is kept
+
+export function migrationError(account, tx, { height, retiredAt = () => undefined, migrationCommits = {}, revealDelay = MIGRATE_REVEAL_DELAY } = {}) {
   const from = addressFromPublicKey(tx.from);
   const target = addressFromPublicKey(tx.to);
   const targetRetired = retiredAt(keyTypeOf(tx.to));
@@ -100,6 +106,11 @@ export function migrationError(account, tx, { height, retiredAt = () => undefine
   const sunset = retiredAt(keyTypeOf(tx.from));
   if (sunset && height >= sunset && account.nonce > 0) {
     return `this account's ${keyTypeOf(tx.from)} key was exposed and it made no migration commitment before block ${sunset}; it can't migrate safely`;
+  }
+  if (sunset && height >= sunset) {
+    const at = migrationCommits[migrationRevealCommitment(tx.chainId, tx.from, target)];
+    if (at === undefined) return `after block ${sunset} a never-used ${keyTypeOf(tx.from)} account must first send a migrate-commit (a hash only, from any account) and migrate ${revealDelay} blocks later`;
+    if (height - at < revealDelay) return `too early: this account's migrate-commit is from block ${at}; migrate from block ${at + revealDelay}`;
   }
   return null;
 }
@@ -114,6 +125,7 @@ export class State {
     this.banned = banned;
     this.rewardPool = rewardPool; // validator rewards not yet paid out (counted in supply)
     this.rewardsPaid = rewardsPaid;
+    this.migrationCommits = {}; // migrate-commit hash -> block height it was first made
   }
 
   static fromGenesis(genesis) {
@@ -141,7 +153,9 @@ export class State {
   clone() {
     const copy = new Map();
     for (const [address, account] of this.accounts) copy.set(address, { ...account });
-    return new State(copy, this.supply, this.validators.map((v) => ({ ...v })), new Set(this.banned), this.rewardPool, this.rewardsPaid, cloneCanary(this.canary), this.rwa && structuredClone(this.rwa));
+    const state = new State(copy, this.supply, this.validators.map((v) => ({ ...v })), new Set(this.banned), this.rewardPool, this.rewardsPaid, cloneCanary(this.canary), this.rwa && structuredClone(this.rwa));
+    state.migrationCommits = { ...this.migrationCommits };
+    return state;
   }
 
   get(address) {
@@ -212,6 +226,11 @@ export class State {
   // the previous block; `signers` = those whose signatures this block carries for it.
   endBlock(ctx, { prevSet = null, signers = null } = {}) {
     const p = ctx.params;
+    // Lapsed migrate-commits are dropped (kept in the order made, so only the oldest need checking).
+    for (const [c, at] of Object.entries(this.migrationCommits)) {
+      if (ctx.height - at < MIGRATE_COMMIT_TTL) break;
+      delete this.migrationCommits[c];
+    }
     // Lapsed tripwire commitments: removed, their deposits added to the bounty pool. Commitments are
     // kept in the order they were made, so only the oldest ever need checking.
     if (this.canary && ctx.tripwire) {
@@ -275,8 +294,13 @@ export class State {
         this.accounts.set(from, { ...this.get(from), pqCommit: tx.commitment });
         return;
 
+      case 'migrate-commit':
+        spend(0n, 'insufficient balance for the fee');
+        if (!Object.hasOwn(this.migrationCommits, tx.commitment)) this.migrationCommits[tx.commitment] = ctx.height; // the first one counts
+        return;
+
       case 'migrate': {
-        const policyError = migrationError(sender, tx, ctx);
+        const policyError = migrationError(sender, tx, { ...ctx, migrationCommits: this.migrationCommits });
         if (policyError) throw new Error(policyError);
         const target = addressFromPublicKey(tx.to);
         const dest = this.get(target);
@@ -428,6 +452,7 @@ export class State {
       rewards: [this.rewardPool.toString(), this.rewardsPaid.toString()],
       ...(this.canary ? { canary: { ...this.canary, pool: this.canary.pool.toString() } } : {}),
       ...(isEmptyRwa(this.rwa) ? {} : { rwa: this.rwa }),
+      ...(Object.keys(this.migrationCommits).length ? { migrationCommits: this.migrationCommits } : {}),
     });
   }
 
@@ -442,11 +467,12 @@ export class State {
       rewardsPaid: this.rewardsPaid.toString(),
       ...(this.canary ? { canary: { ...this.canary, pool: this.canary.pool.toString() } } : {}),
       ...(this.rwa ? { rwa: this.rwa } : {}),
+      ...(Object.keys(this.migrationCommits).length ? { migrationCommits: this.migrationCommits } : {}),
     };
   }
 
   static fromJSON(json) {
-    return new State(
+    const state = new State(
       new Map(json.accounts.map(([a, acc]) => [a, { ...acc, balance: BigInt(acc.balance) }])),
       BigInt(json.supply),
       json.validators.map((v) => ({ ...v, stake: BigInt(v.stake) })),
@@ -456,6 +482,8 @@ export class State {
       json.canary ? { ...cloneCanary({ ...json.canary, pool: 0n }), pool: BigInt(json.canary.pool) } : null,
       json.rwa ? structuredClone(json.rwa) : null,
     );
+    state.migrationCommits = { ...(json.migrationCommits ?? {}) };
+    return state;
   }
 }
 

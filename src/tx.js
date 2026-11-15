@@ -2,6 +2,10 @@
 //   transfer  move ARGENI from one account to an address (any key type)
 //   pq-commit lock in, ahead of time, the post-quantum key an account will migrate to. It records only
 //             a hash of the future address, so the new key stays private until the migration.
+//   migrate-commit  for a never-used account after its key type is retired: publish only a hash of
+//             (old public key, new address), from ANY funded account, and migrate a few blocks later.
+//             The old public key stays hidden until the migration, and a racer who learns it from the
+//             migration can't produce an earlier commitment (see state.js migrationError).
 //   migrate   move a whole account to a different post-quantum key: Ed25519 -> post-quantum, or one
 //             post-quantum key to another (e.g. ML-DSA -> SLH-DSA if lattice schemes are ever weakened,
 //             or simply to rotate a key). Signed by BOTH keys, so it proves control of the old account
@@ -27,6 +31,7 @@ const FIELDS = {
   transfer: [...ENVELOPE, 'to', 'amount', 'memo'],
   migrate: [...ENVELOPE, 'to', 'pqSignature'],
   'pq-commit': [...ENVELOPE, 'commitment'],
+  'migrate-commit': [...ENVELOPE, 'commitment'],
   // Sends `amount` that unlocks over time: nothing for lockMonths, then in equal monthly steps over
   // vestMonths (atStart is free right away). Used for team grants and other locked allocations.
   vest: [...ENVELOPE, 'to', 'amount', 'atStart', 'lockMonths', 'vestMonths', 'memo'],
@@ -51,6 +56,12 @@ const VOTE_FIELDS = ['type', 'height', 'round', 'blockHash', 'validRound', 'vali
 // The hash an account commits to: binds the chain, the old address and the new post-quantum address.
 export function migrationCommitment(chainId, fromAddress, toAddress) {
   return sha256(`argeni-pq-commit:v1|${chainId}|${fromAddress}|${toAddress}`);
+}
+
+// What a migrate-commit records: binds the old PUBLIC KEY (not its address), so nobody who only knows
+// the address, which is public, can make a commitment for someone else's account.
+export function migrationRevealCommitment(chainId, oldPublicKey, toAddress) {
+  return sha256(`argeni-migrate-commit:v1|${chainId}|${oldPublicKey}|${toAddress}`);
 }
 
 export function txBody(tx) {
@@ -166,6 +177,7 @@ export function checkTx(tx, { chainId, minFee }, { voteBytes } = {}) {
       if (!positive(tx.amount)) return 'amount must be a positive base-unit integer string';
       break;
     case 'pq-commit':
+    case 'migrate-commit':
     case 'canary-commit':
       if (!isHex(tx.commitment, 32)) return 'commitment must be a 32-byte hex hash';
       break;
