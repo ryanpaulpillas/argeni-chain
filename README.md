@@ -1,4 +1,4 @@
-# Argeni chain
+# CYVBER chain
 
 The Argeni blockchain, built from scratch in Node.js with no dependencies.
 Native coin: **ARGENI** (18 decimals), fixed supply of **500,000,000**.
