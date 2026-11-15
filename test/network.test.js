@@ -31,9 +31,9 @@ test('four validators over HTTP finalize one shared chain, gossip transactions a
   const user = generateKeyPair();
   const userAddr = addressFromPublicKey(user.publicKey);
   const genesis = {
-    chainId: 'argeni-nettest',
+    chainId: 'cyvber-nettest',
     timestamp: Date.now(),
-    coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 },
+    coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 },
     blockTimeMs: 150,
     maxTxsPerBlock: 100,
     minFee: '1000',
@@ -86,8 +86,8 @@ test('four validators over HTTP finalize one shared chain, gossip transactions a
     }
     assert.ok(proposers.size >= 2, 'blocks should come from more than one validator');
     const status = await fetchJson(`${urls[0]}/status`);
-    assert.equal(status.supply, '1000 ARGENI');
-    assert.equal(status.maxSupply, '1000000000 ARGENI');
+    assert.equal(status.supply, '1000 CYVBER');
+    assert.equal(status.maxSupply, '1000000000 CYVBER');
 
     const bad = await fetch(`${urls[0]}/txs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...tx, nonce: 1 }) });
     assert.equal(bad.status, 400);
@@ -112,7 +112,7 @@ test('faucet limits apply per address and per client IP behind a proxy', async (
   const validator = generateKeyPair();
   const faucet = generateKeyPair();
   const genesis = {
-    chainId: 'argeni-faucet-test', timestamp: Date.now(), coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 },
+    chainId: 'cyvber-faucet-test', timestamp: Date.now(), coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 },
     blockTimeMs: 200, maxTxsPerBlock: 100, minFee: '1000', blockReward: '0', maxSupply: (1_000_000_000n * ONE).toString(),
     validators: [validator.publicKey], alloc: { [addressFromPublicKey(faucet.publicKey)]: (1000n * ONE).toString() },
   };

@@ -1,0 +1,26 @@
+# The CYVBER website assistant (answers questions with Claude from the site's own pages).
+[Unit]
+Description=CYVBER website assistant
+After=network-online.target cyvber-node@1.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cyvber
+Group=cyvber
+WorkingDirectory=/opt/cyvber/assistant
+EnvironmentFile=/etc/cyvber/assistant.env
+Environment=SITE_DIR=/opt/cyvber/site
+Environment=NODE_URL=http://127.0.0.1:26601
+Environment=ASSISTANT_HOST=127.0.0.1
+Environment=ASSISTANT_PORT=8787
+ExecStart=/usr/bin/node /opt/cyvber/assistant/server.mjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

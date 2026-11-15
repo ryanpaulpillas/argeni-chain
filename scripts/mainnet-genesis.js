@@ -1,4 +1,4 @@
-// Builds a mainnet genesis from the planned allocation of 500,000,000 ARGENI: every allocation's
+// Builds a mainnet genesis from the planned allocation of 500,000,000 CYVBER: every allocation's
 // lock-up is written in as an on-chain vesting grant, and the validator incentives become the
 // front-loaded reward pool the chain pays out every block.
 //
@@ -16,7 +16,7 @@ const DECIMALS = 18;
 const SUPPLY = 500_000_000n;
 const u = (n) => parseAmount(String(n), DECIMALS);
 
-// The plan published on argeni.io (token page). Months count from launch.
+// The plan published on cyvber.io (token page). Months count from launch.
 export const PLAN = {
   ecosystem: { amount: 150_000_000n, atStart: 15_000_000n, lockMonths: 0, vestMonths: 36 }, // 30%
   treasury: { amount: 100_000_000n, lockMonths: 6, vestMonths: 48 }, // 20%: at most 5% of supply a year
@@ -34,12 +34,12 @@ export function buildGenesis(config) {
   const errors = [];
   const a = config.addresses ?? {};
   for (const name of ['ecosystem', 'treasury', 'publicDistribution', 'partners', 'teamPool', 'liquidity']) {
-    if (!isAddress(a[name] ?? '')) errors.push(`addresses.${name} must be an Argeni address`);
+    if (!isAddress(a[name] ?? '')) errors.push(`addresses.${name} must be an CYVBER address`);
   }
   const founders = Object.entries(a.founders ?? {});
-  if (!founders.every(([addr, amt]) => isAddress(addr) && /^[1-9]\d*$/.test(String(amt)))) errors.push('addresses.founders must map founder addresses to whole ARGENI amounts');
+  if (!founders.every(([addr, amt]) => isAddress(addr) && /^[1-9]\d*$/.test(String(amt)))) errors.push('addresses.founders must map founder addresses to whole CYVBER amounts');
   const foundersTotal = founders.reduce((sum, [, amt]) => sum + BigInt(amt), 0n);
-  if (foundersTotal >= PLAN.team.amount) errors.push(`founder amounts must leave part of the ${PLAN.team.amount} ARGENI team allocation for the team pool (they add up to ${foundersTotal})`);
+  if (foundersTotal >= PLAN.team.amount) errors.push(`founder amounts must leave part of the ${PLAN.team.amount} CYVBER team allocation for the team pool (they add up to ${foundersTotal})`);
   if (!Array.isArray(config.validators) || config.validators.length < 4 || !config.validators.every(isPublicKey)) errors.push('validators must be at least 4 validator public keys');
   if (!Number.isSafeInteger(config.launch)) errors.push('launch must be a timestamp in milliseconds');
   const addrs = [a.ecosystem, a.treasury, a.publicDistribution, a.partners, a.teamPool, a.liquidity, ...founders.map(([x]) => x)];
@@ -61,9 +61,9 @@ export function buildGenesis(config) {
   alloc[a.liquidity] = u(PLAN.liquidity.amount).toString();
 
   const genesis = {
-    chainId: config.chainId ?? 'argeni-1',
+    chainId: config.chainId ?? 'cyvber-1',
     timestamp: config.launch,
-    coin: { name: 'Argeni', symbol: 'ARGENI', decimals: DECIMALS },
+    coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: DECIMALS },
     blockTimeMs: 2000,
     emptyBlockIntervalMs: 60_000,
     maxTxsPerBlock: 200,
@@ -95,7 +95,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     if (fs.existsSync(values.out)) throw new Error(`${values.out} already exists`);
     const genesis = buildGenesis(JSON.parse(fs.readFileSync(values.config, 'utf8')));
     fs.writeFileSync(values.out, `${JSON.stringify(genesis, null, 2)}\n`);
-    console.log(`wrote ${values.out}: ${genesis.chainId}, 500,000,000 ARGENI
+    console.log(`wrote ${values.out}: ${genesis.chainId}, 500,000,000 CYVBER
   ecosystem 150M (15M free, rest over 36 months) · treasury 100M (6-month lock, 48 months)
   validator rewards 60M paid by the chain: 24M, 18M, 12M, 6M per year
   public distribution 50M (held until legal review) · team 75M (founder vaults + team pool; 12-month lock, 24 months)

@@ -28,8 +28,8 @@ const b64 = (buf) => Buffer.from(buf).toString('base64');
 const unb64 = (s) => Buffer.from(String(s), 'base64');
 
 function deriveKeys(sharedKey, init, resp) {
-  const salt = Buffer.from(sha256(`argeni-p2p:v1|${canonical(init)}|${canonical(resp)}`), 'hex');
-  const okm = Buffer.from(crypto.hkdfSync('sha256', sharedKey, salt, Buffer.from('argeni-p2p session keys'), 64));
+  const salt = Buffer.from(sha256(`cyvber-p2p:v1|${canonical(init)}|${canonical(resp)}`), 'hex');
+  const okm = Buffer.from(crypto.hkdfSync('sha256', sharedKey, salt, Buffer.from('cyvber-p2p session keys'), 64));
   return { i2r: crypto.createSecretKey(okm.subarray(0, 32)), r2i: crypto.createSecretKey(okm.subarray(32, 64)) }; // key objects, built once per session
 }
 

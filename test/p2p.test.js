@@ -10,7 +10,7 @@ import { Node, fetchJson } from '../src/node.js';
 import { addressFromPublicKey, generateKeyPair } from '../src/crypto.js';
 
 const ONE = 10n ** 18n;
-const CHAIN = { chainId: 'argeni-p2p-test', genesisHash: 'ab'.repeat(32) };
+const CHAIN = { chainId: 'cyvber-p2p-test', genesisHash: 'ab'.repeat(32) };
 
 function pair() {
   const a = generateKeyPair('ml-dsa-65');
@@ -104,7 +104,7 @@ test('live nodes talk only through the encrypted channel: a wiretap sees no vote
   const validators = Array.from({ length: 4 }, () => generateKeyPair('ml-dsa-65'));
   const faucet = generateKeyPair('ml-dsa-65');
   const genesis = {
-    chainId: 'argeni-wiretap', timestamp: Date.now(), coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 },
+    chainId: 'cyvber-wiretap', timestamp: Date.now(), coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 },
     blockTimeMs: 150, maxTxsPerBlock: 100, minFee: '1000', blockReward: '0', maxSupply: (500_000_000n * ONE).toString(),
     validators: validators.map((v) => v.publicKey), alloc: { [addressFromPublicKey(faucet.publicKey)]: (1000n * ONE).toString() },
   };
@@ -168,7 +168,7 @@ test('live nodes talk only through the encrypted channel: a wiretap sees no vote
 test('an outsider cannot fill the peer list with addresses it does not own', async () => {
   const p2p = await import('../src/p2p.js');
   const keys = Array.from({ length: 4 }, () => generateKeyPair('ml-dsa-65'));
-  const genesis = { chainId: 'argeni-peers', timestamp: Date.now(), coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 }, blockTimeMs: 300, maxTxsPerBlock: 10, minFee: '1000', blockReward: '0', maxSupply: (500_000_000n * ONE).toString(), validators: keys.map((k) => k.publicKey), alloc: {} };
+  const genesis = { chainId: 'cyvber-peers', timestamp: Date.now(), coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 }, blockTimeMs: 300, maxTxsPerBlock: 10, minFee: '1000', blockReward: '0', maxSupply: (500_000_000n * ONE).toString(), validators: keys.map((k) => k.publicKey), alloc: {} };
   const [port, honestPort] = [await freePort(), await freePort()];
   const node = new Node({ genesis, port, validatorKey: keys[0].privateKey, log: () => {} });
   await node.start();

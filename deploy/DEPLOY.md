@@ -1,11 +1,11 @@
-# Putting the Argeni testnet online
+# Putting the CYVBER testnet online
 
-This puts the website at **argeni.io**, the explorer at **explorer.argeni.io**, and the network's
-API at **rpc.argeni.io**, all on one DigitalOcean server with automatic HTTPS. It takes about
+This puts the website at **cyvber.io**, the explorer at **explorer.cyvber.io**, and the network's
+API at **rpc.cyvber.io**, all on one DigitalOcean server with automatic HTTPS. It takes about
 45 minutes, most of it waiting.
 
 What you'll have afterwards: a public **testnet** with 4 post-quantum validators on one server.
-Test ARGENI has no value. One server means one operator, so it is **not decentralized yet**;
+Test CYVBER has no value. One server means one operator, so it is **not decentralized yet**;
 adding validators on other servers is the next step.
 
 ---
@@ -18,19 +18,19 @@ Follow [FOUNDER-VAULT.md](FOUNDER-VAULT.md): the same steps make the treasury va
 hash-based (SLH-DSA-256s) key kept offline with 3 backups. In short:
 
 ```bash
-mkdir -p ~/argeni-vault && chmod 700 ~/argeni-vault
-cd ~/Documents/argeni-chain
-node src/cli.js keygen --out ~/argeni-vault/treasury.json --type slh-dsa-256s --encrypt
-node src/cli.js check-key --key ~/argeni-vault/treasury.json
+mkdir -p ~/cyvber-vault && chmod 700 ~/cyvber-vault
+cd ~/Documents/cyvber-chain
+node src/cli.js keygen --out ~/cyvber-vault/treasury.json --type slh-dsa-256s --encrypt
+node src/cli.js check-key --key ~/cyvber-vault/treasury.json
 ```
 
-Copy the `address ag…` line it prints. You'll need it in step 8. Never upload the key file or the
+Copy the `address cy…` line it prints. You'll need it in step 8. Never upload the key file or the
 passphrase anywhere.
 
 **2. Create an SSH key** (lets you log in to the server securely, without a password):
 
 ```bash
-ssh-keygen -t ed25519 -C "argeni-server"
+ssh-keygen -t ed25519 -C "cyvber-server"
 cat ~/.ssh/id_ed25519.pub
 ```
 
@@ -47,14 +47,14 @@ that `cat` prints (it starts with `ssh-ed25519`).
 | Image | **Ubuntu 24.04 (LTS)** |
 | Size | Basic → Regular → **2 vCPU / 4 GB** |
 | Authentication | **SSH Key** → New SSH Key → paste the line from step 2 |
-| Hostname | `argeni-testnet-1` |
+| Hostname | `cyvber-testnet-1` |
 | Backups | Optional, recommended |
 
 Click **Create Droplet** and copy its **IPv4 address** (for example `203.0.113.25`).
 
 ## Part 3 · GoDaddy DNS
 
-**4.** In GoDaddy: **My Products → argeni.io → DNS**. Add these records, all pointing at the
+**4.** In GoDaddy: **My Products → cyvber.io → DNS**. Add these records, all pointing at the
 server's IP:
 
 | Type | Name | Value | TTL |
@@ -66,11 +66,11 @@ server's IP:
 | A | `faucet` | *your server IP* | 1/2 hour |
 
 - If there is already an **A record for `@`** (often "Parked"), edit it to your IP instead of adding a second one.
-- If argeni.io has **Forwarding** turned on, turn it off.
+- If cyvber.io has **Forwarding** turned on, turn it off.
 - If there is a **CNAME for `www`**, delete it before adding the A record.
-- Don't touch **MX** records if you use email on argeni.io.
+- Don't touch **MX** records if you use email on cyvber.io.
 
-Wait 10–30 minutes, then check on [dnschecker.org](https://dnschecker.org) that `explorer.argeni.io`
+Wait 10–30 minutes, then check on [dnschecker.org](https://dnschecker.org) that `explorer.cyvber.io`
 shows your IP.
 
 ## Part 4 · Install
@@ -78,14 +78,14 @@ shows your IP.
 **5. Build the package** on your Mac:
 
 ```bash
-cd ~/Documents/argeni-chain
+cd ~/Documents/cyvber-chain
 bash deploy/make-bundle.sh
 ```
 
 **6. Upload it** (replace the IP):
 
 ```bash
-scp argeni-bundle.tar.gz root@203.0.113.25:/root/
+scp cyvber-bundle.tar.gz root@203.0.113.25:/root/
 ```
 
 **7. Log in to the server:**
@@ -99,13 +99,13 @@ key with your Anthropic API key for the website's AI assistant, from
 [console.anthropic.com](https://console.anthropic.com/) → API Keys):
 
 ```bash
-tar xzf argeni-bundle.tar.gz
-TREASURY=ag…your-treasury-address ANTHROPIC_API_KEY=sk-ant-… bash argeni-bundle/chain/deploy/setup-server.sh
+tar xzf cyvber-bundle.tar.gz
+TREASURY=cy…your-treasury-address ANTHROPIC_API_KEY=sk-ant-… bash cyvber-bundle/chain/deploy/setup-server.sh
 ```
 
 Leave out `ANTHROPIC_API_KEY=…` to install without the AI assistant; you can add it later by
 running the same command again with the key. The key is stored only on the server, in
-`/etc/argeni/assistant.env`. Each visitor question is a paid Claude API call (a few cents at
+`/etc/cyvber/assistant.env`. Each visitor question is a paid Claude API call (a few cents at
 most; the site's content is cached), and each visitor is limited to 20 questions per 10 minutes.
 Set a monthly spend limit in the Anthropic Console.
 
@@ -122,13 +122,13 @@ help them; the validators themselves are never cut off. Check it with `node src/
 on the server (it lists blocked addresses there) or `GET /firewall`. Tune it with a `firewall`
 section in a node's config, e.g. `"firewall": { "rates": { "tx": 60 }, "allow": ["203.0.113.7"] }`.
 
-**9. Open** https://argeni.io and https://explorer.argeni.io. If HTTPS isn't ready yet, wait a
+**9. Open** https://cyvber.io and https://explorer.cyvber.io. If HTTPS isn't ready yet, wait a
 minute: the certificates are requested the first time.
 
 **10. Back up the server's keys** (run this on your Mac):
 
 ```bash
-scp -r root@203.0.113.25:/opt/argeni/testnet/keys ~/Documents/argeni-testnet-keys-backup
+scp -r root@203.0.113.25:/opt/cyvber/testnet/keys ~/Documents/cyvber-testnet-keys-backup
 ```
 
 Keep the backup private. These are the 4 validator keys and the faucet key.
@@ -140,8 +140,8 @@ Keep the backup private. These are the 4 validator keys and the faucet key.
 **Update the code or website:** repeat steps 5–7, then on the server:
 
 ```bash
-tar xzf argeni-bundle.tar.gz
-bash argeni-bundle/chain/deploy/setup-server.sh
+tar xzf cyvber-bundle.tar.gz
+bash cyvber-bundle/chain/deploy/setup-server.sh
 ```
 
 The chain, its data and its keys are kept; only the code and website are replaced.
@@ -149,10 +149,10 @@ The chain, its data and its keys are kept; only the code and website are replace
 **See what a node is doing:**
 
 ```bash
-systemctl status argeni-node@1        # running?
-journalctl -u argeni-node@1 -f        # live log (Ctrl+C to stop)
-systemctl restart argeni-node@1       # restart one node
-journalctl -u argeni-assistant -f     # the AI assistant's log (one line per question)
+systemctl status cyvber-node@1        # running?
+journalctl -u cyvber-node@1 -f        # live log (Ctrl+C to stop)
+systemctl restart cyvber-node@1       # restart one node
+journalctl -u cyvber-assistant -f     # the AI assistant's log (one line per question)
 ```
 
 ## Adding a validator on another server
@@ -162,20 +162,20 @@ Independent operators join by staking; nobody needs to edit genesis.
 1. The operator creates a validator key on their server and an owner key (holding the stake) on
    their own computer:
    `node src/cli.js keygen --out validator.json` and `node src/cli.js keygen --out owner.json --encrypt`.
-2. They get at least the minimum stake (100,000 test ARGENI on the testnet) into the owner account.
+2. They get at least the minimum stake (100,000 test CYVBER on the testnet) into the owner account.
 3. They start their node with a config like `node-1.json`, without `faucetKey`, with
-   `"peers": ["https://rpc.argeni.io"]`, their own public HTTPS address as
+   `"peers": ["https://rpc.cyvber.io"]`, their own public HTTPS address as
    `"publicUrl": "https://node.their-domain.com"` (behind Caddy, like ours), and a trusted snapshot
    block so it doesn't replay the whole chain: `"trustedBlock": { "height": <h>, "hash": "<hash>" }`.
    On start the node announces its `publicUrl`, and the network passes consensus messages on to it;
    nobody has to edit our servers. Take `h` and `hash` from
-   `https://rpc.argeni.io/status` (the `snapshots` list), ideally checked against the explorer.
+   `https://rpc.cyvber.io/status` (the `snapshots` list), ideally checked against the explorer.
 4. Once their node has caught up, they stake in:
-   `node src/cli.js stake join --key owner.json --validator-key validator.json --amount 100000 --rpc https://rpc.argeni.io`
+   `node src/cli.js stake join --key owner.json --validator-key validator.json --amount 100000 --rpc https://rpc.cyvber.io`
 
 From the next block on, the new validator must sign. Missing 500 blocks in a row costs 0.1% of
 the stake and a day out of the set; signing two different blocks costs 5% and a permanent ban.
-To leave: `node src/cli.js stake leave --key owner.json --validator ag…`. The stake returns after
+To leave: `node src/cli.js stake leave --key owner.json --validator cy…`. The stake returns after
 14 days.
 
 ## Moving or restoring a validator
@@ -190,7 +190,7 @@ double-signing (5% of the stake and a permanent ban). So:
 
 ## Before you announce it
 
-- File the **ARGENI trademark** at IPOPHL (the name becomes public the day this goes live).
+- File the **CYVBER trademark** at IPOPHL (the name becomes public the day this goes live).
 - Get the **logo similarity check** done.
 - Fill in the **"to confirm"** items on the website (contact, repository link, figures).
-- Keep saying clearly that **test ARGENI has no value**, and don't promise it will become real ARGENI.
+- Keep saying clearly that **test CYVBER has no value**, and don't promise it will become real CYVBER.

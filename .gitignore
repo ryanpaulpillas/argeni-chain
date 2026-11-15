@@ -2,7 +2,8 @@ node_modules/
 devnet/
 *.key.json
 testnet/
-argeni-bundle*
+cyvber-bundle*
 devnet-backup*/
 legal/
 .DS_Store
+argeni-bundle*

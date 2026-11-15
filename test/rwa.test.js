@@ -27,7 +27,7 @@ function setup() {
   };
   const alloc = Object.fromEntries(Object.values(k).map((key) => [addressFromPublicKey(key.publicKey), (100n * ONE).toString()]));
   const genesis = {
-    chainId: 'argeni-rwa-test', timestamp: 1_000_000, coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 },
+    chainId: 'cyvber-rwa-test', timestamp: 1_000_000, coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 },
     blockTimeMs: 1000, maxTxsPerBlock: 100, minFee: FEE.toString(), blockReward: '0', maxSupply: (1_000_000_000n * ONE).toString(),
     validators: keys.map((v) => v.publicKey), alloc,
   };
@@ -65,7 +65,7 @@ function refused(ctx, key, fields, pattern) {
 }
 
 const RULES = { kycRequired: true, investorClasses: ['qualified'], allowedCountries: ['*'], foreignCapBps: 4000, maxHolders: 200, lockupUntilHeight: 0, minHoldingUnits: '1', redeemable: false };
-const LEGAL = { entity: 'Pilot Property Holdings Inc.', secRegNo: 'TEST-0001', offering: 'pilot', jurisdiction: 'PH', docsHash: DOC, docsUri: 'https://argeni.io/assets/PHRE1' };
+const LEGAL = { entity: 'Pilot Property Holdings Inc.', secRegNo: 'TEST-0001', offering: 'pilot', jurisdiction: 'PH', docsHash: DOC, docsUri: 'https://cyvber.io/assets/PHRE1' };
 
 function createAsset(ctx, { issuer = ctx.k.issuer, symbol = 'PHRE1', rules = {}, maxSupply = '1000' } = {}) {
   const roles = { compliance: ctx.addr(ctx.k.compliance), recovery: ctx.addr(ctx.k.recovery), attestor: ctx.addr(ctx.k.attestor) };
@@ -80,22 +80,22 @@ function kyc(ctx, who, { country = 'PH', foreign = false, investorClass = 'quali
 const bal = (ctx, assetId, who) => ctx.chain.state.rwa.balances[assetId]?.[ctx.addr(who)]?.balance ?? '0';
 const asset = (ctx, assetId) => ctx.chain.state.rwa.assets[assetId];
 
-test('an asset is created, investors are verified, units are issued and traded, and fees are paid in ARGENI', () => {
+test('an asset is created, investors are verified, units are issued and traded, and fees are paid in CYVBER', () => {
   const ctx = setup();
   const before = ctx.chain.state.root();
   const id = createAsset(ctx);
   assert.notEqual(ctx.chain.state.root(), before, 'asset state is part of the state root');
   kyc(ctx, ctx.k.alice);
   kyc(ctx, ctx.k.bob);
-  const argeniBefore = ctx.chain.state.get(ctx.addr(ctx.k.alice)).balance;
+  const cyvberBefore = ctx.chain.state.get(ctx.addr(ctx.k.alice)).balance;
   ok(ctx, ctx.k.issuer, { type: 'asset-issue', assetId: id, to: ctx.addr(ctx.k.alice), amount: 100n, docRef: H('subscription agreement') });
   ok(ctx, ctx.k.alice, { type: 'asset-transfer', assetId: id, to: ctx.addr(ctx.k.bob), amount: 30n });
   assert.equal(bal(ctx, id, ctx.k.alice), '70');
   assert.equal(bal(ctx, id, ctx.k.bob), '30');
   assert.equal(asset(ctx, id).supply, '100');
   assert.equal(asset(ctx, id).holders, 2);
-  assert.equal(ctx.chain.state.get(ctx.addr(ctx.k.alice)).balance, argeniBefore - FEE, 'the transfer fee is paid in ARGENI');
-  ok(ctx, ctx.k.attestor, { type: 'asset-attest', assetId: id, kind: 'appraisal', valueHash: H('appraisal report'), uri: 'https://argeni.io/assets/PHRE1/appraisal' });
+  assert.equal(ctx.chain.state.get(ctx.addr(ctx.k.alice)).balance, cyvberBefore - FEE, 'the transfer fee is paid in CYVBER');
+  ok(ctx, ctx.k.attestor, { type: 'asset-attest', assetId: id, kind: 'appraisal', valueHash: H('appraisal report'), uri: 'https://cyvber.io/assets/PHRE1/appraisal' });
   assert.equal(asset(ctx, id).lastAttestation.kind, 'appraisal');
   refused(ctx, ctx.k.issuer, { type: 'asset-issue', assetId: id, to: ctx.addr(ctx.k.alice), amount: 901n, docRef: H('x') }, /maximum supply/);
 });
@@ -262,7 +262,7 @@ test('end to end: a node publishes assets, holders and KYC over HTTP', async () 
   const [issuer, compliance, recovery, alice] = Array.from({ length: 4 }, () => generateKeyPair('ml-dsa-65'));
   const a = (key) => addressFromPublicKey(key.publicKey);
   const genesis = {
-    chainId: 'argeni-rwa-e2e', timestamp: Date.now(), coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 },
+    chainId: 'cyvber-rwa-e2e', timestamp: Date.now(), coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 },
     blockTimeMs: 100, emptyBlockIntervalMs: 100, maxTxsPerBlock: 100, minFee: FEE.toString(), blockReward: '0', maxSupply: (1_000_000_000n * ONE).toString(),
     validators: [validator.publicKey], alloc: Object.fromEntries([issuer, compliance, alice].map((key) => [a(key), (100n * ONE).toString()])),
   };

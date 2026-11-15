@@ -48,7 +48,7 @@ const HASH_BASED_TYPES = ['slh-dsa-256s', 'slh-dsa-128s'];
 const MAX_URI = 256;
 
 export function assetIdFor(chainId, issuerAddress, symbol) {
-  return sha256(`argeni-asset:v1|${chainId}|${issuerAddress}|${symbol}`);
+  return sha256(`cyvber-asset:v1|${chainId}|${issuerAddress}|${symbol}`);
 }
 
 // Null if `publicKey` may administer an asset under `policy`, else the reason it may not.
@@ -77,7 +77,7 @@ function rolesError(roles, { partial = false } = {}) {
   if (!plainObject(roles) || !onlyKeys(roles, allowed)) return `roles must be an object with ${allowed.join(', ')}`;
   if (!partial && (!roles.compliance || !roles.recovery)) return 'roles.compliance and roles.recovery are required';
   for (const [role, address] of Object.entries(roles)) {
-    if (!(role === 'attestor' && address === null) && !isAddress(address)) return `roles.${role} must be an Argeni address`;
+    if (!(role === 'attestor' && address === null) && !isAddress(address)) return `roles.${role} must be an CYVBER address`;
   }
   return null;
 }
@@ -127,7 +127,7 @@ export function checkRwaTx(tx) {
     if (RWA_FIELDS[tx.type].includes(field) && !isHash(tx[field])) return `${field} must be a 32-byte hex hash of the supporting document`;
   }
   for (const field of ['to', 'holder', 'address']) {
-    if (RWA_FIELDS[tx.type].includes(field) && !isAddress(tx[field])) return `${field} must be an Argeni address`;
+    if (RWA_FIELDS[tx.type].includes(field) && !isAddress(tx[field])) return `${field} must be an CYVBER address`;
   }
   if (RWA_FIELDS[tx.type].includes('amount') && !positive(tx.amount)) return 'amount must be a positive base-unit integer string';
   switch (tx.type) {

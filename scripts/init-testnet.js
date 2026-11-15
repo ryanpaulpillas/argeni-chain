@@ -1,8 +1,8 @@
 // Creates the public testnet on a server: genesis, validator and faucet keys, node configs.
 //
-//   node scripts/init-testnet.js --treasury <ag… address> [--validators 4] [--out testnet]
+//   node scripts/init-testnet.js --treasury <cy… address> [--validators 4] [--out testnet]
 //
-// The treasury (435,865,000 test ARGENI) is only an ADDRESS here: its key is created on the
+// The treasury (435,865,000 test CYVBER) is only an ADDRESS here: its key is created on the
 // operator's own computer and never touches the server. Validator and faucet keys are created
 // here, post-quantum (ML-DSA-87), readable only by the user running this script.
 import fs from 'node:fs';
@@ -17,13 +17,13 @@ const { values } = parseArgs({
     treasury: { type: 'string' },
     validators: { type: 'string', default: '4' },
     out: { type: 'string', default: 'testnet' },
-    'chain-id': { type: 'string', default: 'argeni-testnet-1' },
+    'chain-id': { type: 'string', default: 'cyvber-testnet-1' },
   },
 });
 
 const count = Number(values.validators);
 if (!isAddress(values.treasury ?? '')) {
-  console.error('--treasury <address> is required: create it on your own computer with\n  node src/cli.js keygen --out argeni-treasury.json\nand pass only the address it prints.');
+  console.error('--treasury <address> is required: create it on your own computer with\n  node src/cli.js keygen --out cyvber-treasury.json\nand pass only the address it prints.');
   process.exit(1);
 }
 if (!Number.isInteger(count) || count < 1 || count > 20) {
@@ -41,14 +41,14 @@ const BASE_PORT = 26601;
 const validators = Array.from({ length: count }, (_, i) => writeKeyFile(path.join(root, 'keys', `validator-${i + 1}.json`), generateKeyPair('ml-dsa-87')));
 const faucet = writeKeyFile(path.join(root, 'keys', 'faucet.json'), generateKeyPair('ml-dsa-87'));
 
-// Q-Day Tripwire bounties (ARGENI), rising with the strength of the bait key.
+// Q-Day Tripwire bounties (CYVBER), rising with the strength of the bait key.
 const TRIPWIRE_BOUNTIES = { 'ecc-160': '10000', 'ecc-192': '25000', 'ecc-224': '100000', 'ecc-256': '1000000', secp256k1: '1000000', 'rsa-2048': '1000000' };
 const TRIPWIRE_TOTAL = '3135000';
 
 const genesis = {
   chainId: values['chain-id'],
   timestamp: Date.now(),
-  coin: { name: 'Argeni', symbol: 'ARGENI', decimals: DECIMALS },
+  coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: DECIMALS },
   blockTimeMs: 2000,
   emptyBlockIntervalMs: 60_000, // idle chain: one heartbeat block a minute instead of one every 2 s
   maxTxsPerBlock: 200, // post-quantum transactions are ~10 KB each
@@ -105,8 +105,8 @@ for (let i = 1; i <= count; i++) {
 console.log(`testnet created in ${root}
 chain id    ${genesis.chainId}
 validators  ${count} (ML-DSA-87, post-quantum, NIST category 5)
-treasury    ${values.treasury}  435,865,000 test ARGENI (key stays off this server)
-tripwire    3,135,000 test ARGENI in Q-Day bounties on 6 bait keys
-rewards     60,000,000 test ARGENI validator pool, paid by the chain (24M, 18M, 12M, 6M a year)
-faucet      ${faucet.address}  1,000,000 test ARGENI, served by node 1
+treasury    ${values.treasury}  435,865,000 test CYVBER (key stays off this server)
+tripwire    3,135,000 test CYVBER in Q-Day bounties on 6 bait keys
+rewards     60,000,000 test CYVBER validator pool, paid by the chain (24M, 18M, 12M, 6M a year)
+faucet      ${faucet.address}  1,000,000 test CYVBER, served by node 1
 Back up ${path.join(root, 'keys')} somewhere safe and private.`);

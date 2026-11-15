@@ -1,7 +1,7 @@
 # Founder and treasury vault keys
 
-How to create and keep the keys that will hold large ARGENI allocations: the founders' 8%
-(40,000,000 ARGENI) and the treasury. The same steps work for the testnet treasury today.
+How to create and keep the keys that will hold large CYVBER allocations: the founders' 8%
+(40,000,000 CYVBER) and the treasury. The same steps work for the testnet treasury today.
 
 ## The setup
 
@@ -11,7 +11,7 @@ How to create and keep the keys that will hold large ARGENI allocations: the fou
 | Encryption | **Passphrase-encrypted file** (`--encrypt`) | The file alone is useless to a thief. The passphrase is stretched with scrypt and the key sealed with AES-256-GCM. |
 | One key per founder | Yes | Each founder controls their own share. |
 | Where it lives | **Offline**, never on a server | Only the vault's *address* goes into the chain's genesis and onto servers. |
-| Backups | **3 copies**, in 3 places | Losing the key means losing the tokens: nobody, including Argeni, can recover them. |
+| Backups | **3 copies**, in 3 places | Losing the key means losing the tokens: nobody, including CYVBER, can recover them. |
 
 ## Create a vault (once per founder)
 
@@ -19,7 +19,7 @@ How to create and keep the keys that will hold large ARGENI allocations: the fou
    `~/Desktop` are often synced; use a folder in your home directory instead:
 
    ```bash
-   mkdir -p ~/argeni-vault && chmod 700 ~/argeni-vault
+   mkdir -p ~/cyvber-vault && chmod 700 ~/cyvber-vault
    ```
 
 2. **Go offline.** Turn off Wi-Fi while creating the key.
@@ -30,19 +30,19 @@ How to create and keep the keys that will hold large ARGENI allocations: the fou
 4. **Create the encrypted vault key:**
 
    ```bash
-   cd ~/Documents/argeni-chain
-   node src/cli.js keygen --out ~/argeni-vault/founder-ryan.json --type slh-dsa-256s --encrypt
+   cd ~/Documents/cyvber-chain
+   node src/cli.js keygen --out ~/cyvber-vault/founder-ryan.json --type slh-dsa-256s --encrypt
    ```
 
-   It asks for the passphrase twice and prints the vault's **address** (`ag…`, 64 characters).
+   It asks for the passphrase twice and prints the vault's **address** (`cy…`, 64 characters).
 
 5. **Test that it opens** (this is how you'll test every backup too):
 
    ```bash
-   node src/cli.js check-key --key ~/argeni-vault/founder-ryan.json
+   node src/cli.js check-key --key ~/cyvber-vault/founder-ryan.json
    ```
 
-   It should print `OK: … opens and controls ag… (slh-dsa-256s, encrypted)`.
+   It should print `OK: … opens and controls cy… (slh-dsa-256s, encrypted)`.
 
 ## Back it up: 3 copies, 3 places
 
@@ -68,7 +68,7 @@ key from the computer if you don't need it there.
 The command-line wallet asks for the passphrase whenever the vault signs, for example:
 
 ```bash
-node src/cli.js send --key ~/argeni-vault/founder-ryan.json --to ag… --amount 1000
+node src/cli.js send --key ~/cyvber-vault/founder-ryan.json --to cy… --amount 1000
 ```
 
 Founder tokens are locked for the first year after mainnet anyway. Before relying on the vault,
@@ -102,8 +102,8 @@ before funds move. One lost or stolen key is then not enough to lose or steal an
    computer (the file can travel by USB or email; it holds no secrets), and anyone submits it:
 
    ```bash
-   node src/cli.js multisig propose --vault treasury-vault.json --to ag… --amount 1000 --out spend.json
-   node src/cli.js multisig sign --tx spend.json --key ~/argeni-vault/member-ryan.json
+   node src/cli.js multisig propose --vault treasury-vault.json --to cy… --amount 1000 --out spend.json
+   node src/cli.js multisig sign --tx spend.json --key ~/cyvber-vault/member-ryan.json
    node src/cli.js multisig sign --tx spend.json --key member-b.json     # on member B's computer
    node src/cli.js multisig submit --tx spend.json
    ```

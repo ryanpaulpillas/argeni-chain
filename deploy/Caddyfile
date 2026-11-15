@@ -1,16 +1,16 @@
 # Caddy gets and renews HTTPS certificates for these names automatically.
 # DNS for each name must point at this server before Caddy starts.
 
-argeni.io, www.argeni.io {
+cyvber.io, www.cyvber.io {
 	encode gzip
-	# The AI assistant (argeni-assistant service); answers stream as server-sent events.
+	# The AI assistant (cyvber-assistant service); answers stream as server-sent events.
 	handle /api/assistant* {
 		reverse_proxy 127.0.0.1:8787 {
 			flush_interval -1
 		}
 	}
 	handle {
-		root * /opt/argeni/site
+		root * /opt/cyvber/site
 		file_server
 	}
 	header {
@@ -21,11 +21,11 @@ argeni.io, www.argeni.io {
 }
 
 # Block explorer and JSON API, served by validator node 1.
-explorer.argeni.io, rpc.argeni.io {
+explorer.cyvber.io, rpc.cyvber.io {
 	encode gzip
 	reverse_proxy 127.0.0.1:26601
 }
 
-faucet.argeni.io {
-	redir https://argeni.io/#start
+faucet.cyvber.io {
+	redir https://cyvber.io/#start
 }

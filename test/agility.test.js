@@ -14,7 +14,7 @@ function setup(extra = {}) {
   const lattice = generateKeyPair('ml-dsa-65');
   const strong = generateKeyPair('ml-dsa-87');
   const genesis = {
-    chainId: 'argeni-agility-test', timestamp: 1_000_000, coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 },
+    chainId: 'cyvber-agility-test', timestamp: 1_000_000, coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 },
     blockTimeMs: 1000, maxTxsPerBlock: 100, minFee: FEE.toString(), blockReward: '0', maxSupply: (1_000_000_000n * ONE).toString(),
     validators: keys.map((k) => k.publicKey),
     alloc: { [addressFromPublicKey(lattice.publicKey)]: (100n * ONE).toString(), [addressFromPublicKey(strong.publicKey)]: (100n * ONE).toString() },
@@ -45,11 +45,11 @@ test('ML-DSA-87 and SLH-DSA-256s (NIST category 5) sign and verify; ML-DSA-87 is
     const k = generateKeyPair(type);
     assert.equal(keyTypeOf(k.publicKey), type);
     assert.equal(KEY_INFO[type].category, 5);
-    const sig = sign('argeni', k.privateKey);
+    const sig = sign('cyvber', k.privateKey);
     assert.equal(sig.length, bytes * 2);
-    assert.equal(verify('argeni', sig, k.publicKey), true);
+    assert.equal(verify('cyvber', sig, k.publicKey), true);
     assert.equal(verify('argenI', sig, k.publicKey), false);
-    assert.match(addressFromPublicKey(k.publicKey), /^ag[0-9a-f]{64}$/, '256-bit address');
+    assert.match(addressFromPublicKey(k.publicKey), /^cy[0-9a-f]{64}$/, '256-bit address');
   }
   // A signature from one category-5 scheme never verifies under the other.
   const a = generateKeyPair('ml-dsa-87');

@@ -17,9 +17,9 @@ function setup({ validators = 4, blockReward = '0', maxSupply = BILLION, aliceFu
   const alice = generateKeyPair();
   const bob = generateKeyPair();
   const genesis = {
-    chainId: 'argeni-test',
+    chainId: 'cyvber-test',
     timestamp: 1_000_000,
-    coin: { name: 'Argeni', symbol: 'ARGENI', decimals: DECIMALS },
+    coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: DECIMALS },
     blockTimeMs: 1000,
     maxTxsPerBlock: 100,
     minFee: '1000',
@@ -54,7 +54,7 @@ test('quorum needs more than two thirds of validators', () => {
   assert.deepEqual([1, 3, 4, 7, 10].map(faultTolerance), [0, 0, 1, 2, 3]);
 });
 
-test('amounts convert between ARGENI and base units', () => {
+test('amounts convert between CYVBER and base units', () => {
   assert.equal(parseAmount('1.5', DECIMALS), 1_500_000_000_000_000_000n);
   assert.equal(formatAmount(1_500_000_000_000_000_000n, DECIMALS), '1.5');
   assert.equal(formatAmount(BILLION, DECIMALS), '1000000000');
@@ -64,7 +64,7 @@ test('amounts convert between ARGENI and base units', () => {
 
 test('supply can never exceed maxSupply', () => {
   assert.throws(() => setup({ aliceFunds: BILLION + 1n }), /alloc exceeds maxSupply/);
-  // Genesis holds all but 1.5 ARGENI; a 1 ARGENI block reward mints 1, then 0.5, then nothing.
+  // Genesis holds all but 1.5 CYVBER; a 1 CYVBER block reward mints 1, then 0.5, then nothing.
   const ctx = setup({ aliceFunds: BILLION - (3n * ONE) / 2n, blockReward: ONE.toString() });
   for (let i = 0; i < 3; i++) assert.deepEqual(ctx.chain.addBlock(finalize(ctx)), { ok: true });
   assert.equal(ctx.chain.state.supply, BILLION);
@@ -141,7 +141,7 @@ test('a quorum cannot certify an invalid block', () => {
 });
 
 test('a node restarts from its data dir and refuses a different genesis', () => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'argeni-'));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cyvber-'));
   try {
     const ctx = setup();
     ctx.chain = new Chain(ctx.genesis, { dataDir, now: () => ctx.clock.t });

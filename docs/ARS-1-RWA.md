@@ -1,10 +1,10 @@
-# ARS-1: Real-World Asset Tokens on Argeni
+# ARS-1: Real-World Asset Tokens on CYVBER
 
 **Status:** v0.1, implemented on the devnet and testnet (src/rwa.js, test/rwa.test.js; 2026-11-01).
 Not legal advice: every rule below must be checked by Philippine securities counsel before any real
 asset is offered. Demo assets only until a licensed issuer and CASP take part.
 
-**Post-quantum administration (ARGENI's advantage).** Every admin action (create, issue, freeze,
+**Post-quantum administration (CYVBER's advantage).** Every admin action (create, issue, freeze,
 pause, force-transfer, rule changes, attestations, KYC) must be signed by a post-quantum key
 (ML-DSA or SLH-DSA, or a multisig of them). The chain refuses classical keys for these actions
 outright, so a future quantum computer can never forge an issuer's or transfer agent's signature on
@@ -14,7 +14,7 @@ functions; this can be tightened but never relaxed. Admin keys rotate with `migr
 asset's roles and the compliance agent's KYC registry follow the new key.
 
 ARS-1 defines how a real-world asset (shares in an SPV, a loan, a fund unit, a warehouse receipt)
-is represented on the Argeni chain. The chain has no smart contracts, so ARS-1 adds **native
+is represented on the CYVBER chain. The chain has no smart contracts, so ARS-1 adds **native
 transaction types**, checked by every validator like `transfer` and `migrate`.
 
 ## 1. Principles
@@ -26,7 +26,7 @@ transaction types**, checked by every validator like `transfer` and `migrate`.
    holder-count or foreign-ownership rules are refused by consensus.
 3. **No personal data on chain.** The chain stores only codes and hashes (Data Privacy Act,
    RA 10173). KYC files stay with the licensed CASP or transfer agent.
-4. **Fees are paid in ARGENI.** Asset tokens are never used for fees, and ARGENI is never an asset
+4. **Fees are paid in CYVBER.** Asset tokens are never used for fees, and CYVBER is never an asset
    token.
 5. **Post-quantum administration, enforced.** Admin transactions signed by a classical key are
    refused by consensus. Vault-grade assets can require SLH-DSA (`rules.adminKeys: "hash-based"`;
@@ -51,7 +51,7 @@ different keys.
 
 ```js
 assets[assetId] = {
-  assetId,              // sha256("argeni-asset:v1|" + chainId + "|" + issuerAddress + "|" + symbol)
+  assetId,              // sha256("cyvber-asset:v1|" + chainId + "|" + issuerAddress + "|" + symbol)
   symbol,               // 2–12 chars, A–Z 0–9, unique per issuer
   name,                 // up to 64 chars
   class,                // 'equity' | 'debt' | 'fund' | 'real-estate' | 'commodity' | 'receivable'
@@ -143,7 +143,7 @@ admin action leaves an audit trail without publishing the document.
    (40% for land-owning and condominium corporations under the Constitution and RA 4726);
 8. the sender would be left with `0 < balance < minHoldingUnits`, or the receiver would end up
    below it;
-9. the sender lacks the units, or lacks ARGENI for the fee.
+9. the sender lacks the units, or lacks CYVBER for the fee.
 
 `asset-issue` and `asset-force-transfer` apply checks 4–7 to the receiver, so neither the issuer
 nor the recovery role can bypass KYC or the foreign cap. They ignore pause, freeze and lock-up.
@@ -156,7 +156,7 @@ a new post-quantum key would lose their securities or need a force-transfer.
 
 ## 7. Distributions (v0.2)
 
-Dividends and coupons are paid off-chain or in ARGENI. v0.1 only records them:
+Dividends and coupons are paid off-chain or in CYVBER. v0.1 only records them:
 `asset-attest` with `kind: 'distribution'` and a `valueHash` of the payout list at a snapshot
 height. On-chain pro-rata payouts are left for later because they would mean writing to every
 holder in one block.
@@ -185,8 +185,8 @@ holder in one block.
   "class": "real-estate",
   "decimals": 0,
   "maxSupply": "100000",
-  "roles": { "issuer": "ag…spv", "compliance": "ag…casp", "recovery": "ag…agent", "attestor": "ag…appraiser" },
-  "legal": { "entity": "Pilot Property Holdings Inc.", "secRegNo": "TO CONFIRM", "offering": "stratbox", "jurisdiction": "PH", "docsHash": "…", "docsUri": "https://argeni.io/assets/PHRE1" },
+  "roles": { "issuer": "cy…spv", "compliance": "cy…casp", "recovery": "cy…agent", "attestor": "cy…appraiser" },
+  "legal": { "entity": "Pilot Property Holdings Inc.", "secRegNo": "TO CONFIRM", "offering": "stratbox", "jurisdiction": "PH", "docsHash": "…", "docsUri": "https://cyvber.io/assets/PHRE1" },
   "rules": { "kycRequired": true, "investorClasses": ["qualified"], "allowedCountries": ["*"], "foreignCapBps": 4000, "maxHolders": 200, "lockupUntilHeight": 0, "minHoldingUnits": "1", "redeemable": false }
 }
 ```
@@ -198,7 +198,7 @@ Differences from the draft above: `asset-create` takes `roles: { compliance, rec
 also accepts `pilot`; `rules.adminKeys` ('pq' default, or 'hash-based') was added; `asset-pause` may
 be signed by the compliance agent or the issuer. A move that reduces foreign holdings is always
 allowed, so an asset above its foreign cap can be brought back under it. HTTP: `GET /assets`,
-`GET /assets/:id`, `GET /accounts/:address/assets`. CLI: `argeni asset list|show|holdings|send`.
+`GET /assets/:id`, `GET /accounts/:address/assets`. CLI: `cyvber asset list|show|holdings|send`.
 
 ## 11. Original implementation plan
 

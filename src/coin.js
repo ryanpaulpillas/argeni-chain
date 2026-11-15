@@ -1,4 +1,4 @@
-// Conversion between ARGENI amounts ("1.5") and base units (BigInt).
+// Conversion between CYVBER amounts ("1.5") and base units (BigInt).
 // All amounts on chain are base-unit integers stored as decimal strings.
 
 export function parseAmount(text, decimals) {

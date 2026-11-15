@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 const PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
 const SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
-export const ADDRESS_PREFIX = 'ag';
+export const ADDRESS_PREFIX = 'cy';
 
 // Deterministic JSON: object keys sorted, so the same data always hashes the same.
 export function canonical(value) {
@@ -133,7 +133,7 @@ export function verify(message, signatureHex, publicKey) {
   return false;
 }
 
-// Address = "ag" + all 32 bytes of sha256 of the public key (64 hex characters). A full 256-bit hash
+// Address = "cy" + all 32 bytes of sha256 of the public key (64 hex characters). A full 256-bit hash
 // keeps 128-bit security even against Grover's quantum search for a key matching an address.
 // Ed25519: sha256(raw 32-byte key). Post-quantum: sha256(type label || SPKI DER), e.g. "mldsa87:",
 // so addresses of different key types never collide.
@@ -171,7 +171,7 @@ export function merkleRoot(leaves) {
 
 // ---- Multi-signature accounts ----
 // A multisig "public key" is "msig:<m>:<key1>,<key2>,…": any m of the listed post-quantum keys must
-// sign. Its address is "ag" + sha256 of that whole string, so it never collides with a single key's
+// sign. Its address is "cy" + sha256 of that whole string, so it never collides with a single key's
 // address. A multisig signature is "<i>:<hex>,<j>:<hex>,…", where i is the signer's position in the
 // list. Used for treasuries and founder vaults ("2 of 3 must sign"), so one lost or stolen key is
 // not enough to move funds.

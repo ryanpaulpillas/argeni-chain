@@ -36,7 +36,7 @@ async function waitFor(check, timeoutMs = 30_000) {
 }
 
 test('multisig, vesting and staking work from the command line; a new validator fast-syncs and signs', { timeout: 120_000 }, async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'argeni-cli-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cyvber-cli-'));
   const file = (name) => path.join(dir, name);
   const keyFile = (name, type = 'ml-dsa-65') => writeKeyFile(file(name), generateKeyPair(type));
   const validators = Array.from({ length: 4 }, (_, i) => keyFile(`v${i}.json`));
@@ -44,7 +44,7 @@ test('multisig, vesting and staking work from the command line; a new validator 
   const members = ['a', 'b', 'c'].map((m) => keyFile(`member-${m}.json`, 'ml-dsa-87'));
   const operator = keyFile('operator.json');
   const genesis = {
-    chainId: 'argeni-cli-test', timestamp: Date.now(), coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 },
+    chainId: 'cyvber-cli-test', timestamp: Date.now(), coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 },
     blockTimeMs: 150, maxTxsPerBlock: 100, minFee: '1000', blockReward: '0', maxSupply: (1_000_000_000n * ONE).toString(),
     validators: validators.map((v) => v.publicKey), alloc: { [owner.address]: (100_000n * ONE).toString() },
     staking: { minStake: (1000n * ONE).toString() },
@@ -60,7 +60,7 @@ test('multisig, vesting and staking work from the command line; a new validator 
   try {
     // A 2-of-3 vault: funded, then spent with two members' signatures.
     const created = await cli('multisig', 'create', '--threshold', '2', '--keys', ['a', 'b', 'c'].map((m) => file(`member-${m}.json`)).join(','), '--out', file('vault.json'));
-    const vaultAddr = /address (ag[0-9a-f]{64})/.exec(created)[1];
+    const vaultAddr = /address (cy[0-9a-f]{64})/.exec(created)[1];
     await cli('send', '--key', file('owner.json'), '--to', vaultAddr, '--amount', '500');
     await waitFor(async () => (await account(vaultAddr)).balance === (500n * ONE).toString());
     const recipient = addressFromPublicKey(generateKeyPair().publicKey);
@@ -77,7 +77,7 @@ test('multisig, vesting and staking work from the command line; a new validator 
     await waitFor(async () => (await account(hire)).locked === (2400n * ONE).toString());
 
     // A new validator stakes in from the command line.
-    assert.match(await cli('stake', 'join', '--key', file('owner.json'), '--validator-key', file('operator.json'), '--amount', '1000'), /joins with 1000 ARGENI staked/);
+    assert.match(await cli('stake', 'join', '--key', file('owner.json'), '--validator-key', file('operator.json'), '--amount', '1000'), /joins with 1000 CYVBER staked/);
     await waitFor(async () => (await fetchJson(`${urls[0]}/validators`)).active === 5);
     assert.match(await cli('validators'), /5 active validators, quorum 4/);
 
@@ -88,7 +88,7 @@ test('multisig, vesting and staking work from the command line; a new validator 
       snap = snapshots.at(-1);
       return snap && snap.height >= 3;
     });
-    // Like an outside operator who only knows rpc.argeni.io: one peer, plus its own public URL,
+    // Like an outside operator who only knows rpc.cyvber.io: one peer, plus its own public URL,
     // which it announces; the rest of the network reaches it through relayed messages.
     joiner = new Node({ genesis, port: ports[4], peers: [urls[0]], publicUrl: urls[4], validatorKey: operator.privateKey, trustedBlock: snap, log: () => {} });
     await joiner.start();

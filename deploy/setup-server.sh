@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Sets up an Argeni testnet server on Ubuntu 22.04 or 24.04. Run as root from the unpacked bundle:
+# Sets up an CYVBER testnet server on Ubuntu 22.04 or 24.04. Run as root from the unpacked bundle:
 #
-#   TREASURY=ag...your-treasury-address ANTHROPIC_API_KEY=sk-ant-... bash argeni-bundle/chain/deploy/setup-server.sh
+#   TREASURY=cy...your-treasury-address ANTHROPIC_API_KEY=sk-ant-... bash cyvber-bundle/chain/deploy/setup-server.sh
 #
 # ANTHROPIC_API_KEY is optional: with it, the website's AI assistant is installed too. It is stored
-# only in /etc/argeni/assistant.env (readable by root and the service).
+# only in /etc/cyvber/assistant.env (readable by root and the service).
 #
 # Safe to run again to update the code: the testnet (genesis, keys, chain data) is created only once.
 set -euo pipefail
@@ -13,7 +13,7 @@ BUNDLE="$(cd "$(dirname "$0")/../.." && pwd)"
 VALIDATORS="${VALIDATORS:-4}"
 
 [ "$(id -u)" = 0 ] || { echo "Please run as root (or with sudo)."; exit 1; }
-[ -d "$BUNDLE/chain/src" ] && [ -d "$BUNDLE/site" ] || { echo "Run this script from inside the unpacked argeni-bundle."; exit 1; }
+[ -d "$BUNDLE/chain/src" ] && [ -d "$BUNDLE/site" ] || { echo "Run this script from inside the unpacked cyvber-bundle."; exit 1; }
 
 echo "== 1/6 System packages"
 apt-get update -y
@@ -36,57 +36,57 @@ if ! command -v caddy >/dev/null; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y caddy
 fi
 
-echo "== 4/6 Argeni code and website"
-id argeni >/dev/null 2>&1 || useradd --system --home-dir /opt/argeni --shell /usr/sbin/nologin argeni
-mkdir -p /opt/argeni
-rm -rf /opt/argeni/chain.new /opt/argeni/site.new
-cp -R "$BUNDLE/chain" /opt/argeni/chain.new
-cp -R "$BUNDLE/site" /opt/argeni/site.new
-rm -rf /opt/argeni/chain /opt/argeni/site
-mv /opt/argeni/chain.new /opt/argeni/chain
-mv /opt/argeni/site.new /opt/argeni/site
-chown -R root:root /opt/argeni/chain /opt/argeni/site
-chmod -R a+rX /opt/argeni/chain /opt/argeni/site
+echo "== 4/6 CYVBER code and website"
+id cyvber >/dev/null 2>&1 || useradd --system --home-dir /opt/cyvber --shell /usr/sbin/nologin cyvber
+mkdir -p /opt/cyvber
+rm -rf /opt/cyvber/chain.new /opt/cyvber/site.new
+cp -R "$BUNDLE/chain" /opt/cyvber/chain.new
+cp -R "$BUNDLE/site" /opt/cyvber/site.new
+rm -rf /opt/cyvber/chain /opt/cyvber/site
+mv /opt/cyvber/chain.new /opt/cyvber/chain
+mv /opt/cyvber/site.new /opt/cyvber/site
+chown -R root:root /opt/cyvber/chain /opt/cyvber/site
+chmod -R a+rX /opt/cyvber/chain /opt/cyvber/site
 
 if [ -d "$BUNDLE/assistant" ]; then
-  rm -rf /opt/argeni/assistant.new && cp -R "$BUNDLE/assistant" /opt/argeni/assistant.new
-  (cd /opt/argeni/assistant.new && npm ci --omit=dev --no-audit --no-fund)
-  rm -rf /opt/argeni/assistant && mv /opt/argeni/assistant.new /opt/argeni/assistant
-  chown -R root:root /opt/argeni/assistant && chmod -R a+rX /opt/argeni/assistant
+  rm -rf /opt/cyvber/assistant.new && cp -R "$BUNDLE/assistant" /opt/cyvber/assistant.new
+  (cd /opt/cyvber/assistant.new && npm ci --omit=dev --no-audit --no-fund)
+  rm -rf /opt/cyvber/assistant && mv /opt/cyvber/assistant.new /opt/cyvber/assistant
+  chown -R root:root /opt/cyvber/assistant && chmod -R a+rX /opt/cyvber/assistant
 fi
 
 echo "== 5/6 Testnet (created only once)"
-if [ ! -f /opt/argeni/testnet/genesis.json ]; then
+if [ ! -f /opt/cyvber/testnet/genesis.json ]; then
   [ -n "${TREASURY:-}" ] || { echo "Set TREASURY=<your treasury address>. Create it on your own computer, never on the server."; exit 1; }
-  node /opt/argeni/chain/scripts/init-testnet.js --treasury "$TREASURY" --validators "$VALIDATORS" --out /opt/argeni/testnet
+  node /opt/cyvber/chain/scripts/init-testnet.js --treasury "$TREASURY" --validators "$VALIDATORS" --out /opt/cyvber/testnet
 else
   echo "testnet already exists, keeping it"
 fi
-mkdir -p /opt/argeni/testnet/data
-chown -R argeni:argeni /opt/argeni/testnet
-chmod 700 /opt/argeni/testnet/keys
-chmod 600 /opt/argeni/testnet/keys/*.json
+mkdir -p /opt/cyvber/testnet/data
+chown -R cyvber:cyvber /opt/cyvber/testnet
+chmod 700 /opt/cyvber/testnet/keys
+chmod 600 /opt/cyvber/testnet/keys/*.json
 
 echo "== 6/6 Services and firewall"
-cp /opt/argeni/chain/deploy/argeni-node@.service /etc/systemd/system/argeni-node@.service
-cp /opt/argeni/chain/deploy/Caddyfile /etc/caddy/Caddyfile
+cp /opt/cyvber/chain/deploy/cyvber-node@.service /etc/systemd/system/cyvber-node@.service
+cp /opt/cyvber/chain/deploy/Caddyfile /etc/caddy/Caddyfile
 systemctl daemon-reload
-COUNT=$(ls /opt/argeni/testnet/node-*.json | wc -l)
+COUNT=$(ls /opt/cyvber/testnet/node-*.json | wc -l)
 for i in $(seq 1 "$COUNT"); do
-  systemctl enable "argeni-node@$i" >/dev/null
-  systemctl restart "argeni-node@$i"
+  systemctl enable "cyvber-node@$i" >/dev/null
+  systemctl restart "cyvber-node@$i"
 done
-if [ -d /opt/argeni/assistant ]; then
-  mkdir -p /etc/argeni && chmod 750 /etc/argeni && chgrp argeni /etc/argeni
+if [ -d /opt/cyvber/assistant ]; then
+  mkdir -p /etc/cyvber && chmod 750 /etc/cyvber && chgrp cyvber /etc/cyvber
   if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-    umask 077; printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY" > /etc/argeni/assistant.env
-    chgrp argeni /etc/argeni/assistant.env; chmod 640 /etc/argeni/assistant.env
+    umask 077; printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY" > /etc/cyvber/assistant.env
+    chgrp cyvber /etc/cyvber/assistant.env; chmod 640 /etc/cyvber/assistant.env
   fi
-  if [ -f /etc/argeni/assistant.env ]; then
-    cp /opt/argeni/chain/deploy/argeni-assistant.service /etc/systemd/system/argeni-assistant.service
+  if [ -f /etc/cyvber/assistant.env ]; then
+    cp /opt/cyvber/chain/deploy/cyvber-assistant.service /etc/systemd/system/cyvber-assistant.service
     systemctl daemon-reload
-    systemctl enable argeni-assistant >/dev/null
-    systemctl restart argeni-assistant
+    systemctl enable cyvber-assistant >/dev/null
+    systemctl restart cyvber-assistant
   else
     echo "AI assistant not started: run again with ANTHROPIC_API_KEY=... to enable it."
   fi
@@ -101,9 +101,9 @@ ufw --force enable >/dev/null
 sleep 5
 echo
 echo "Node 1 status:"
-curl -s http://127.0.0.1:26601/status | head -c 400 || echo "(node not answering yet; check: journalctl -u argeni-node@1 -n 50)"
+curl -s http://127.0.0.1:26601/status | head -c 400 || echo "(node not answering yet; check: journalctl -u cyvber-node@1 -n 50)"
 echo
 echo
-echo "Done. Open https://argeni.io and https://explorer.argeni.io"
+echo "Done. Open https://cyvber.io and https://explorer.cyvber.io"
 echo "(HTTPS certificates can take a minute; they need the GoDaddy DNS records to point here.)"
-echo "IMPORTANT: back up /opt/argeni/testnet/keys somewhere private."
+echo "IMPORTANT: back up /opt/cyvber/testnet/keys somewhere private."

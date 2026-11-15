@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// argeni command-line tool: keys, running a node, balances, transfers, faucet.
+// cyvber command-line tool: keys, running a node, balances, transfers, faucet.
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -14,7 +14,7 @@ import { RWA_TYPES, assetIdFor } from './rwa.js';
 
 const DEFAULT_RPC = 'http://127.0.0.1:26601';
 
-const USAGE = `argeni <command> [options]
+const USAGE = `cyvber <command> [options]
 
   keygen --out <file> [--type ml-dsa-87|ml-dsa-65|slh-dsa-256s|slh-dsa-128s|ed25519] [--encrypt]
                                               create a new key file (default: post-quantum ML-DSA-87,
@@ -27,8 +27,8 @@ const USAGE = `argeni <command> [options]
   node --config <file>                        run a node
   status [--rpc <url>]                        show chain status
   balance <address> [--rpc <url>]             show an account balance
-  send --key <file> --to <address> --amount <ARGENI> [--fee <ARGENI>] [--memo <text>] [--rpc <url>]
-  faucet <address> [--rpc <url>]              request testnet ARGENI
+  send --key <file> --to <address> --amount <CYVBER> [--fee <CYVBER>] [--memo <text>] [--rpc <url>]
+  faucet <address> [--rpc <url>]              request testnet CYVBER
   migrate-commit --key <old key file> --new-key <post-quantum file> --payer <funded key file> [--rpc <url>]
                                               after a key type is retired, a never-used account sends this
                                               first (paid by --payer, so the old key stays hidden), then
@@ -41,25 +41,25 @@ const USAGE = `argeni <command> [options]
                                               (Ed25519 -> post-quantum, or rotate e.g. ML-DSA -> SLH-DSA)
 
 Vesting (locked allocations, e.g. team grants)
-  vest --key <file> --to <address> --amount <ARGENI> --lock <months> --vest <months> [--at-start <ARGENI>]
-                                              send ARGENI that unlocks over time: nothing for --lock
+  vest --key <file> --to <address> --amount <CYVBER> --lock <months> --vest <months> [--at-start <CYVBER>]
+                                              send CYVBER that unlocks over time: nothing for --lock
                                               months, then equal monthly parts over --vest months
 
 Multi-signature vaults (e.g. 2 of 3 founders must sign)
   multisig create --threshold <m> --keys <a.json,b.json,c.json> --out <vault.json>
                                               make a vault from members' key files (only their public
                                               keys are read); prints the vault's address
-  multisig propose --vault <vault.json> --to <address> --amount <ARGENI> --out <tx.json>
+  multisig propose --vault <vault.json> --to <address> --amount <CYVBER> --out <tx.json>
                    [--lock <months> --vest <months>]   prepare an unsigned transfer (or vesting grant)
   multisig sign --tx <tx.json> --key <member key file>  add one member's signature (offline is fine)
   multisig submit --tx <tx.json>              send it once enough members have signed
 
 Staking (validators)
   validators [--rpc <url>]                    list validators, stake and status
-  stake join --key <owner key> --validator-key <file> --amount <ARGENI>
-                                              bond ARGENI and add a validator (its key signs too)
-  stake add --key <owner key> --validator <address> --amount <ARGENI>
-  stake request --validator-key <file> --operator <address> --amount <ARGENI> --out <request.json>
+  stake join --key <owner key> --validator-key <file> --amount <CYVBER>
+                                              bond CYVBER and add a validator (its key signs too)
+  stake add --key <owner key> --validator <address> --amount <CYVBER>
+  stake request --validator-key <file> --operator <address> --amount <CYVBER> --out <request.json>
                                               (operator) ask for delegated stake: signed by the validator
                                               key, safe to send to the stake provider
   stake delegate --key <stake provider key> --request <request.json>
@@ -90,7 +90,7 @@ Real-world assets (ARS-1; every administrator key must be post-quantum)
   asset holdings <address> [--rpc <url>]      an account's asset units and KYC entries
   asset send --key <file> --tx <fields.json>  sign and send any ARS-1 transaction from a JSON file of
                                               its fields, e.g. {"type":"asset-issue","assetId":"…",
-                                              "to":"ag…","amount":"100","docRef":"<sha256 of the document>"}
+                                              "to":"cy…","amount":"100","docRef":"<sha256 of the document>"}
                                               (types: ${RWA_TYPES.join(', ')})
 
 Default --rpc is ${DEFAULT_RPC}.`;
@@ -116,7 +116,7 @@ const months = (v, name) => {
 async function signAndSend(rpc, keyFile, { extraSigners, attach = {}, ...fields }) {
   const genesis = await fetchJson(`${rpc}/genesis`);
   const key = await loadSigningKey(keyFile);
-  if (!key.privateKey) throw new Error(`${keyFile} is a multisig vault; use "argeni multisig propose"`);
+  if (!key.privateKey) throw new Error(`${keyFile} is a multisig vault; use "cyvber multisig propose"`);
   const account = await fetchJson(`${rpc}/accounts/${addressFromPublicKey(key.publicKey)}`);
   // `attach`: signatures made by others (e.g. an operator's validator consent), added after signing.
   const tx = { ...createTx({ chainId: genesis.chainId, fee: BigInt(genesis.minFee), nonce: account.pendingNonce, ...fields }, { privateKey: key.privateKey, extraSigners }), ...attach };
@@ -188,7 +188,7 @@ async function main(argv) {
       if (isEncrypted(file)) throw new Error(`${values.key} is already encrypted`);
       if (fs.existsSync(values.out)) throw new Error(`${values.out} already exists; refusing to overwrite a key`);
       writeKeyFile(values.out, encryptKeyFile(file, await choosePassphrase()));
-      console.log(`wrote encrypted ${values.out} for ${file.address}\nCheck it with: argeni check-key --key ${values.out}\nThen delete the unencrypted ${values.key} securely.`);
+      console.log(`wrote encrypted ${values.out} for ${file.address}\nCheck it with: cyvber check-key --key ${values.out}\nThen delete the unencrypted ${values.key} securely.`);
       return;
     }
     case 'check-key': {
@@ -252,7 +252,7 @@ async function main(argv) {
         for (const r of tw.rungs) console.log(`  ${r.id.padEnd(10)} ${r.name.padEnd(32)} level ${r.level}  ${r.bounty.padEnd(24)} ${r.broken ? `BROKEN at block ${r.broken.height} by ${r.broken.by}` : 'intact'}`);
         return;
       }
-      if (sub !== 'commit' && sub !== 'reveal') throw new Error('usage: argeni canary ladder|commit|reveal');
+      if (sub !== 'commit' && sub !== 'reveal') throw new Error('usage: cyvber canary ladder|commit|reveal');
       if (!values.key || !values.rung || !values.solution) throw new Error('--key, --rung and --solution are required');
       if (!normalizeSolution(values.rung, values.solution)) throw new Error(`--rung must be one of ${RUNG_IDS.join(', ')} with a hex solution ("<p hex>.<q hex>" for rsa-2048)`);
       const genesis = await fetchJson(`${rpc}/genesis`);
@@ -266,7 +266,7 @@ async function main(argv) {
       const tx = createTx({ chainId: genesis.chainId, fee: BigInt(genesis.minFee), nonce: account.pendingNonce, ...fields }, { privateKey: key.privateKey });
       const { hash } = await postTx(rpc, tx);
       console.log(sub === 'commit'
-        ? `committed a claim on ${values.rung} (only a hash is public)\nreveal after ${genesis.tripwire?.revealDelayBlocks ?? 10} blocks with: argeni canary reveal --key ${values.key} --rung ${values.rung} --solution <same>\ntx ${hash}`
+        ? `committed a claim on ${values.rung} (only a hash is public)\nreveal after ${genesis.tripwire?.revealDelayBlocks ?? 10} blocks with: cyvber canary reveal --key ${values.key} --rung ${values.rung} --solution <same>\ntx ${hash}`
         : `revealed the solution for ${values.rung}; if it is valid the bounty is paid in the next block\ntx ${hash}`);
       return;
     }
@@ -292,11 +292,11 @@ async function main(argv) {
         return;
       }
       if (sub === 'show' || sub === 'holdings') {
-        if (!positionals[1]) throw new Error(`usage: argeni asset ${sub} <${sub === 'show' ? 'assetId' : 'address'}>`);
+        if (!positionals[1]) throw new Error(`usage: cyvber asset ${sub} <${sub === 'show' ? 'assetId' : 'address'}>`);
         console.log(JSON.stringify(await fetchJson(`${rpc}/${sub === 'show' ? 'assets' : 'accounts'}/${positionals[1]}${sub === 'holdings' ? '/assets' : ''}`), null, 2));
         return;
       }
-      if (sub !== 'send') throw new Error('usage: argeni asset list|show|holdings|send');
+      if (sub !== 'send') throw new Error('usage: cyvber asset list|show|holdings|send');
       if (!values.key || !values.tx) throw new Error('--key and --tx <fields.json> are required');
       const fields = JSON.parse(fs.readFileSync(values.tx, 'utf8'));
       if (!RWA_TYPES.includes(fields.type)) throw new Error(`"type" must be one of: ${RWA_TYPES.join(', ')}`);
@@ -322,7 +322,7 @@ async function main(argv) {
       const { decimals, symbol } = status.coin;
       const genesis = await fetchJson(`${rpc}/genesis`);
       const key = await loadSigningKey(values.key);
-      if (!key.privateKey) throw new Error(`${values.key} is a multisig vault; use "argeni multisig propose"`);
+      if (!key.privateKey) throw new Error(`${values.key} is a multisig vault; use "cyvber multisig propose"`);
       const from = addressFromPublicKey(key.publicKey);
       const account = await fetchJson(`${rpc}/accounts/${from}`);
       const tx = createTransfer({
@@ -351,7 +351,7 @@ async function main(argv) {
       const genesis = await fetchJson(`${rpc}/genesis`);
       const commitment = migrationRevealCommitment(genesis.chainId, oldKey.publicKey, addressFromPublicKey(newKey.publicKey));
       const { hash } = await signAndSend(rpc, values.payer, { type: 'migrate-commit', commitment });
-      console.log(`sent migrate-commit (only a hash; the old public key is still hidden)\ntx ${hash}\nthen, after the reveal delay: argeni migrate --key ${values.key} --new-key ${values['new-key']}`);
+      console.log(`sent migrate-commit (only a hash; the old public key is still hidden)\ntx ${hash}\nthen, after the reveal delay: cyvber migrate --key ${values.key} --new-key ${values['new-key']}`);
       return;
     }
     case 'pq-commit': {
@@ -451,7 +451,7 @@ tx ${hash}`);
         });
         if (fs.existsSync(values.out)) throw new Error(`${values.out} already exists`);
         fs.writeFileSync(values.out, `${JSON.stringify({ tx, signatures: [] }, null, 2)}\n`);
-        console.log(`wrote ${values.out}: ${values.amount} ${genesis.coin.symbol} from ${vault.address} to ${values.to}\nNow ${parseMultisig(vault.publicKey).threshold} members run: argeni multisig sign --tx ${values.out} --key <their key file>`);
+        console.log(`wrote ${values.out}: ${values.amount} ${genesis.coin.symbol} from ${vault.address} to ${values.to}\nNow ${parseMultisig(vault.publicKey).threshold} members run: cyvber multisig sign --tx ${values.out} --key <their key file>`);
         return;
       }
       if (sub === 'sign') {
@@ -463,7 +463,7 @@ tx ${hash}`);
         file.signatures = [combineMultisig([...file.signatures, signMultisigPart(signingBytes(file.tx), file.tx.from, key.privateKey)])];
         fs.writeFileSync(values.tx, `${JSON.stringify(file, null, 2)}\n`);
         const have = file.signatures[0].split(',').length;
-        console.log(`${have} of ${ms.threshold} signatures${have >= ms.threshold ? ` — ready: argeni multisig submit --tx ${values.tx}` : ''}`);
+        console.log(`${have} of ${ms.threshold} signatures${have >= ms.threshold ? ` — ready: cyvber multisig submit --tx ${values.tx}` : ''}`);
         return;
       }
       if (sub === 'submit') {
@@ -499,7 +499,7 @@ tx ${hash}`);
         const request = { chainId, validator: vkey.publicKey, operator: values.operator, amount: parseAmount(values.amount, coin.decimals).toString() };
         if (fs.existsSync(values.out)) throw new Error(`${values.out} already exists`);
         fs.writeFileSync(values.out, `${JSON.stringify({ ...request, validatorSignature: sign(validatorConsentBytes(request), vkey.privateKey) }, null, 2)}\n`);
-        console.log(`wrote ${values.out}: request for ${values.amount} ${coin.symbol} of stake for validator ${addressFromPublicKey(vkey.publicKey)}, rewards to ${values.operator}\nIt holds no private key. Send it to the stake provider; they finish with: argeni stake delegate --key <their key> --request ${values.out}`);
+        console.log(`wrote ${values.out}: request for ${values.amount} ${coin.symbol} of stake for validator ${addressFromPublicKey(vkey.publicKey)}, rewards to ${values.operator}\nIt holds no private key. Send it to the stake provider; they finish with: cyvber stake delegate --key <their key> --request ${values.out}`);
         return;
       }
       if (!values.key) throw new Error('--key (the owner account) is required');
@@ -512,7 +512,7 @@ tx ${hash}`);
         return;
       }
       if (sub === 'delegate') {
-        if (!values.request) throw new Error('--request is required (made by the operator with "argeni stake request")');
+        if (!values.request) throw new Error('--request is required (made by the operator with "cyvber stake request")');
         const request = JSON.parse(fs.readFileSync(values.request, 'utf8'));
         const { chainId } = await fetchJson(`${rpc}/status`);
         if (request.chainId !== chainId) throw new Error(`this request is for ${request.chainId}, not ${chainId}`);

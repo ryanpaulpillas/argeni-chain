@@ -17,7 +17,7 @@ function setup({ validatorType = 'ml-dsa-65', sunset } = {}) {
   const legacy = generateKeyPair('ed25519');
   const pq = generateKeyPair('ml-dsa-65');
   const genesis = {
-    chainId: 'argeni-pq-test', timestamp: 1_000_000, coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 },
+    chainId: 'cyvber-pq-test', timestamp: 1_000_000, coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 },
     blockTimeMs: 1000, maxTxsPerBlock: 100, minFee: FEE.toString(), blockReward: '0', maxSupply: BILLION.toString(),
     validators: keys.map((k) => k.publicKey),
     alloc: { [addressFromPublicKey(legacy.publicKey)]: (100n * ONE).toString(), [addressFromPublicKey(pq.publicKey)]: (50n * ONE).toString() },
@@ -54,10 +54,10 @@ test('ML-DSA-65 keys sign and verify; signatures do not cross key types', () => 
   assert.equal(verify('hello', sign('hello', ed.privateKey), pq.publicKey), false);
   assert.equal(verify('hello', sig, ed.publicKey), false);
   assert.notEqual(addressFromPublicKey(pq.publicKey), addressFromPublicKey(ed.publicKey));
-  assert.match(addressFromPublicKey(pq.publicKey), /^ag[0-9a-f]{64}$/);
+  assert.match(addressFromPublicKey(pq.publicKey), /^cy[0-9a-f]{64}$/);
 });
 
-test('a post-quantum account sends ARGENI, finalized by post-quantum validators', () => {
+test('a post-quantum account sends CYVBER, finalized by post-quantum validators', () => {
   const ctx = setup();
   const bob = addressFromPublicKey(generateKeyPair('ml-dsa-65').publicKey);
   assert.equal(ctx.chain.addTx(transfer(ctx, ctx.pq, bob, 5n * ONE, 0)).ok, true);
@@ -82,13 +82,13 @@ test('migration moves an Ed25519 account to a post-quantum key and locks the old
 
   // The old key can't move anything any more, even if a quantum computer recovers it later.
   const fromOld = transfer(ctx, ctx.legacy, ctx.pqAddr, 1n, 1);
-  assert.match(ctx.chain.addTx(fromOld).error, /was migrated to ag/, 'refused on arrival');
+  assert.match(ctx.chain.addTx(fromOld).error, /was migrated to cy/, 'refused on arrival');
   ctx.chain.mempool.set('forced', fromOld); // even if it reached a block builder some other way
   assert.equal(finalize(ctx).txs.length, 0, 'transfer from a migrated account is never included');
   ctx.chain.mempool.delete('forced');
-  assert.match(ctx.chain.addTx(transfer(ctx, ctx.pq, ctx.legacyAddr, ONE, 0)).error, /recipient migrated to ag/);
+  assert.match(ctx.chain.addTx(transfer(ctx, ctx.pq, ctx.legacyAddr, ONE, 0)).error, /recipient migrated to cy/);
   // Payments to the old address are refused, pointing to the new one.
-  assert.throws(() => ctx.chain.state.clone().applyTx(transfer(ctx, ctx.pq, ctx.legacyAddr, ONE, 0), newAddr), /recipient migrated to ag/);
+  assert.throws(() => ctx.chain.state.clone().applyTx(transfer(ctx, ctx.pq, ctx.legacyAddr, ONE, 0), newAddr), /recipient migrated to cy/);
   // The new post-quantum key spends normally.
   assert.equal(ctx.chain.addTx(transfer(ctx, newKey, ctx.pqAddr, ONE, 0)).ok, true);
   finalize(ctx);
@@ -179,7 +179,7 @@ test('after the sunset an exposed key without a commitment cannot migrate; a nev
   assert.match(ctx.chain.addTx(migration(ctx, unused, thief, 1)).error, /migrated/, 'the old account is locked for good');
 });
 
-test('SLH-DSA-128s (hash-based, FIPS 205) keys sign, verify and send ARGENI', () => {
+test('SLH-DSA-128s (hash-based, FIPS 205) keys sign, verify and send CYVBER', () => {
   const slh = generateKeyPair('slh-dsa-128s');
   assert.equal(keyTypeOf(slh.publicKey), 'slh-dsa-128s');
   const sig = sign('hello', slh.privateKey);
@@ -187,7 +187,7 @@ test('SLH-DSA-128s (hash-based, FIPS 205) keys sign, verify and send ARGENI', ()
   assert.equal(verify('hello', sig, slh.publicKey), true);
   assert.equal(verify('hellO', sig, slh.publicKey), false);
   assert.equal(verify('hello', sign('hello', generateKeyPair('ml-dsa-65').privateKey), slh.publicKey), false);
-  assert.match(addressFromPublicKey(slh.publicKey), /^ag[0-9a-f]{64}$/);
+  assert.match(addressFromPublicKey(slh.publicKey), /^cy[0-9a-f]{64}$/);
 
   const ctx = setup();
   const slhAddr = addressFromPublicKey(slh.publicKey);
@@ -217,7 +217,7 @@ test('a commitment is bound to its chain and account, from any key type', () => 
 test('four post-quantum validators reach consensus', async () => {
   const keys = Array.from({ length: 4 }, () => generateKeyPair('ml-dsa-65'));
   const genesis = {
-    chainId: 'argeni-pq-consensus', timestamp: Date.now(), coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 },
+    chainId: 'cyvber-pq-consensus', timestamp: Date.now(), coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 },
     blockTimeMs: 50, maxTxsPerBlock: 100, minFee: '1000', blockReward: '0', maxSupply: BILLION.toString(),
     validators: keys.map((k) => k.publicKey), alloc: {},
   };

@@ -36,7 +36,7 @@ test('editing an encrypted key file (address or ciphertext) makes it fail', () =
 });
 
 test('CLI: keygen --encrypt, check-key, encrypt an existing key, and refuse a bad passphrase', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'argeni-vault-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cyvber-vault-'));
   try {
     const run = (args, input) => spawnSync(process.execPath, [CLI, ...args], { input, encoding: 'utf8' });
     const vault = path.join(dir, 'vault.json');
@@ -48,7 +48,7 @@ test('CLI: keygen --encrypt, check-key, encrypt an existing key, and refuse a ba
 
     r = run(['check-key', '--key', vault], `${PASS}\n`);
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /OK: .* opens and controls ag[0-9a-f]{64} \(slh-dsa-256s, encrypted\)/);
+    assert.match(r.stdout, /OK: .* opens and controls cy[0-9a-f]{64} \(slh-dsa-256s, encrypted\)/);
     r = run(['check-key', '--key', vault], 'not the passphrase!\n');
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /wrong passphrase/);

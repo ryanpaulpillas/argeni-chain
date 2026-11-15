@@ -11,7 +11,7 @@
 // Every active validator has one vote; joining needs at least minStake bonded.
 //
 // Q-Day Tripwire (when genesis.tripwire is set; see tripwire.js): canary = { pool, commits, broken,
-// retire }. pool is the bounty ARGENI not yet paid (counted in supply); commits maps a claim
+// retire }. pool is the bounty CYVBER not yet paid (counted in supply); commits maps a claim
 // commitment to the block it was made in; broken maps a rung to { height, by }; retire maps a key
 // type to the block height from which the tripwire retired it.
 //
@@ -218,7 +218,7 @@ export class State {
   #slash(v, bps) {
     const cut = (v.stake * BigInt(bps)) / 10_000n;
     v.stake -= cut;
-    this.supply -= cut; // slashed ARGENI is burned
+    this.supply -= cut; // slashed CYVBER is burned
     return cut;
   }
 
@@ -431,7 +431,7 @@ export class State {
         if (this.spendable(from, t) < fee) throw new Error('insufficient balance for the fee');
         this.rwa ??= emptyRwa();
         applyRwaTx(this.rwa, tx, from, { height: ctx.height, chainId: ctx.chainId, isMigrated: (a) => Boolean(this.get(a).migratedTo) });
-        spend(0n, 'insufficient balance for the fee'); // asset fees are always paid in ARGENI
+        spend(0n, 'insufficient balance for the fee'); // asset fees are always paid in CYVBER
       }
     }
   }

@@ -1,14 +1,14 @@
 {
-  "name": "argeni-chain",
+  "name": "cyvber-chain",
   "version": "0.1.0",
-  "description": "Argeni blockchain node: native coin ARGENI, proof-of-authority devnet/testnet",
+  "description": "CYVBER blockchain node: native coin CYVBER, proof-of-authority devnet/testnet",
   "type": "module",
   "private": true,
   "engines": {
     "node": ">=20"
   },
   "bin": {
-    "argeni": "src/cli.js"
+    "cyvber": "src/cli.js"
   },
   "scripts": {
     "devnet:init": "node scripts/init-devnet.js",

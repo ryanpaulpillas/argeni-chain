@@ -20,7 +20,7 @@ function setup({ validators = 4, vesting, staking, alloc = {} } = {}) {
   const alice = generateKeyPair('ml-dsa-65');
   const aliceAddr = addressFromPublicKey(alice.publicKey);
   const genesis = {
-    chainId: 'argeni-mainnet-test', timestamp: 1_000_000, coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 },
+    chainId: 'cyvber-mainnet-test', timestamp: 1_000_000, coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 },
     blockTimeMs: 1000, maxTxsPerBlock: 100, minFee: FEE.toString(), blockReward: '0', maxSupply: (1_000_000_000n * ONE).toString(),
     validators: keys.map((k) => k.publicKey),
     alloc: { [aliceAddr]: (1_000_000n * ONE).toString(), ...alloc },
@@ -69,13 +69,13 @@ test('a vested allocation stays locked, then unlocks month by month', () => {
   submit(ctx, send(ctx, ctx.alice, founderAddr, 10n * ONE)); // free money on top of the grant
   finalize(ctx);
 
-  // Before the lock ends, only the 10 free ARGENI can move.
+  // Before the lock ends, only the 10 free CYVBER can move.
   const tooMuch = send(ctx, founder, ctx.aliceAddr, 11n * ONE);
   assert.match(ctx.chain.addTx(tooMuch).error, /locked by vesting/);
   submit(ctx, send(ctx, founder, ctx.aliceAddr, 9n * ONE));
   finalize(ctx);
 
-  // 13 months in: one 24th (100 ARGENI) has unlocked.
+  // 13 months in: one 24th (100 CYVBER) has unlocked.
   ctx.clock.t = ctx.genesis.timestamp + 13 * MONTH_MS;
   finalize(ctx, { advance: 0 });
   assert.match(ctx.chain.addTx(send(ctx, founder, ctx.aliceAddr, 101n * ONE)).error, /locked by vesting/);
@@ -202,7 +202,7 @@ test('double-signing is proven by evidence: stake slashed and burned, key banned
 
   assert.equal(ctx.chain.validatorList.length, 4, 'removed from the set at once');
   assert.equal(ctx.chain.state.validator(cheat.publicKey).stake, 1900n * ONE, '5% slashed');
-  assert.equal(ctx.chain.state.supply, supplyBefore - 100n * ONE, 'slashed ARGENI is burned');
+  assert.equal(ctx.chain.state.supply, supplyBefore - 100n * ONE, 'slashed CYVBER is burned');
   finalize(ctx, { advance: DAY });
   assert.equal(ctx.chain.state.get(ctx.aliceAddr).balance, 1_000_000n * ONE - 100n * ONE - 2n * FEE - ONE, 'the rest returned after unbonding');
   const rejoin = createTx({ type: 'validator-join', chainId: ctx.genesis.chainId, validator: cheat.publicKey, amount: 2000n * ONE, fee: FEE, nonce: nonceOf(ctx, ctx.alice) }, { privateKey: ctx.alice.privateKey, extraSigners: { validatorSignature: cheat.privateKey } });
@@ -250,7 +250,7 @@ test('a new node starts from a verified snapshot instead of replaying every bloc
   }
   const snap = JSON.parse(JSON.stringify(ctx.chain.snapshot()));
   const trusted = { height: 3, hash: ctx.chain.tipHash };
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'argeni-snap-'));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cyvber-snap-'));
   try {
     Chain.verifySnapshot(ctx.genesis, snap, trusted);
     const fresh = new Chain(ctx.genesis, { snapshot: snap, dataDir, now: () => ctx.clock.t });
@@ -283,7 +283,7 @@ test('a validator that stakes in joins a running network and starts voting', asy
   const operator = generateKeyPair('ml-dsa-65');
   const owner = generateKeyPair('ml-dsa-65');
   const genesis = {
-    chainId: 'argeni-join-test', timestamp: Date.now(), coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 },
+    chainId: 'cyvber-join-test', timestamp: Date.now(), coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 },
     blockTimeMs: 40, maxTxsPerBlock: 100, minFee: '1000', blockReward: '0', maxSupply: (1_000_000_000n * ONE).toString(),
     validators: keys.map((k) => k.publicKey), alloc: { [addressFromPublicKey(owner.publicKey)]: (5000n * ONE).toString() },
     staking: { minStake: (1000n * ONE).toString() },
@@ -339,7 +339,7 @@ test('the validator reward pool pays the validators that signed, front-loaded by
   assert.equal(ctx.chain.state.rewardPool, 1800n * ONE, 'the pool is part of the supply from genesis');
   const owner = (k) => addressFromPublicKey(k.publicKey);
   finalize(ctx, { skip: [ctx.keys[3].publicKey] });
-  // One month later: year 1 releases 1200 / 12 = 100 ARGENI a month. Validator 4 stays silent.
+  // One month later: year 1 releases 1200 / 12 = 100 CYVBER a month. Validator 4 stays silent.
   ctx.clock.t = ctx.genesis.timestamp + MONTH_MS;
   finalize(ctx, { advance: 0, skip: [ctx.keys[3].publicKey] });
   finalize(ctx, { skip: [ctx.keys[3].publicKey] }); // carries the signatures (3 of 4) for the block above
@@ -374,7 +374,7 @@ test('delegated stake: the operator runs the validator and earns; the stake retu
   assert.ok(ctx.chain.state.get(operatorAddr).balance > 0n, 'rewards and fees go to the operator');
   const aliceBefore = ctx.chain.state.get(ctx.aliceAddr).balance;
 
-  // The operator can take the validator out (it needs a little ARGENI for the fee, which it has earned).
+  // The operator can take the validator out (it needs a little CYVBER for the fee, which it has earned).
   submit(ctx, createTx({ type: 'validator-leave', chainId: ctx.genesis.chainId, validator: vkey.publicKey, fee: FEE, nonce: 0 }, { privateKey: operatorAccount.privateKey }));
   finalize(ctx);
   // Only the provider can add stake.
@@ -388,12 +388,12 @@ test('the mainnet genesis builder writes the planned allocation into the chain',
   const addr = () => addressFromPublicKey(generateKeyPair('ml-dsa-65').publicKey);
   const [f1, f2] = [addr(), addr()];
   const config = {
-    chainId: 'argeni-1', launch: 1_800_000_000_000, validators: Array.from({ length: 4 }, () => generateKeyPair('ml-dsa-65').publicKey),
+    chainId: 'cyvber-1', launch: 1_800_000_000_000, validators: Array.from({ length: 4 }, () => generateKeyPair('ml-dsa-65').publicKey),
     addresses: { ecosystem: addr(), treasury: addr(), publicDistribution: addr(), partners: addr(), teamPool: addr(), liquidity: addr(), founders: { [f1]: '30000000', [f2]: '10000000' } },
   };
   const genesis = buildGenesis(config);
   const chain = new Chain(genesis, { now: () => genesis.timestamp });
-  assert.equal(chain.state.supply, 500_000_000n * ONE, 'exactly 500,000,000 ARGENI');
+  assert.equal(chain.state.supply, 500_000_000n * ONE, 'exactly 500,000,000 CYVBER');
   assert.equal(chain.state.rewardPool, 60_000_000n * ONE);
   const t0 = genesis.timestamp;
   const free = (a, t) => chain.state.spendable(a, t);
@@ -411,7 +411,7 @@ test('the mainnet genesis builder writes the planned allocation into the chain',
 test('a validator that restarts mid-round repeats what it signed instead of double-signing', async () => {
   const { memorySignLog } = await import('../src/consensus.js');
   const keys = Array.from({ length: 4 }, () => generateKeyPair('ml-dsa-65'));
-  const genesis = { chainId: 'argeni-restart', timestamp: Date.now(), coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 }, blockTimeMs: 100, maxTxsPerBlock: 10, minFee: '1000', blockReward: '0', maxSupply: (500_000_000n * ONE).toString(), validators: keys.map((k) => k.publicKey), alloc: {} };
+  const genesis = { chainId: 'cyvber-restart', timestamp: Date.now(), coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 }, blockTimeMs: 100, maxTxsPerBlock: 10, minFee: '1000', blockReward: '0', maxSupply: (500_000_000n * ONE).toString(), validators: keys.map((k) => k.publicKey), alloc: {} };
   const chain = new Chain(genesis);
   const proposerIndex = keys.findIndex((k) => k.publicKey === chain.proposerFor(1, 0));
   const sent = [];

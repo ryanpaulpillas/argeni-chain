@@ -119,7 +119,7 @@ export class Node {
       this.consensus.start();
     }
     const role = this.validatorKey ? `validator ${addressFromPublicKey(publicKeyFromPrivate(this.validatorKey))}` : 'full node';
-    this.log(`argeni node listening on ${this.url} (${role}), chain ${this.chain.genesis.chainId}, height ${this.chain.height}`);
+    this.log(`cyvber node listening on ${this.url} (${role}), chain ${this.chain.genesis.chainId}, height ${this.chain.height}`);
     return this;
   }
 
@@ -623,7 +623,7 @@ export class Node {
   }
 
   // Every validator's view of the chain, gathered by this node from its peers, so a browser that can
-  // only reach this node (e.g. through rpc.argeni.io) can still see which validators are online.
+  // only reach this node (e.g. through rpc.cyvber.io) can still see which validators are online.
   async #network() {
     if (this.networkCache && Date.now() - this.networkCache.at < 2000) return this.networkCache.value;
     const summarize = (s) => s && { validator: s.self, height: s.height, consensus: s.consensus };
@@ -684,7 +684,7 @@ export class Node {
     }
     if (parts[0] === 'consensus' && parts.length === 1) {
       // Valid messages seen for the first time are passed on to our peers, so validators that are
-      // not directly connected (e.g. an outside validator that only knows rpc.argeni.io) still hear
+      // not directly connected (e.g. an outside validator that only knows rpc.cyvber.io) still hear
       // each other.
       const id = typeof body?.signature === 'string' ? `${body.type}:${body.signature.slice(0, 128)}` : body?.type === 'commit' ? `commit:${body.block?.hash}` : null;
       if (id && this.relayed.has(id)) return send(res, 200, { ok: true, known: true });
@@ -731,7 +731,7 @@ export class Node {
     const address = body?.address;
     if (!isAddress(address)) return send(res, 400, { error: 'invalid address' });
     const addressWait = this.faucetAddressLimit.peek(address);
-    if (addressWait) return send(res, 429, { error: `this address already received test ARGENI, try again in ${formatWait(addressWait)}` });
+    if (addressWait) return send(res, 429, { error: `this address already received test CYVBER, try again in ${formatWait(addressWait)}` });
     const ipWait = this.faucetIpLimit.peek(ip);
     if (ipWait) return send(res, 429, { error: `the faucet was already used from your network, try again in ${formatWait(ipWait)}` });
     const { chain } = this;

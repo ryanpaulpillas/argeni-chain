@@ -1,5 +1,5 @@
 // Transactions: build, sign, hash and stateless validation.
-//   transfer  move ARGENI from one account to an address (any key type)
+//   transfer  move CYVBER from one account to an address (any key type)
 //   pq-commit lock in, ahead of time, the post-quantum key an account will migrate to. It records only
 //             a hash of the future address, so the new key stays private until the migration.
 //   migrate-commit  for a never-used account after its key type is retired: publish only a hash of
@@ -11,7 +11,7 @@
 //             or simply to rotate a key). Signed by BOTH keys, so it proves control of the old account
 //             and possession of the new key; the old account is then locked for good. If the account
 //             made a pq-commit, the new key must match it (see state.js migrationError).
-//   vest      send ARGENI that unlocks month by month (team grants and other locked allocations)
+//   vest      send CYVBER that unlocks month by month (team grants and other locked allocations)
 //   validator-join / -bond / -leave / -unjail   staking: join the validator set, add stake, leave
 //             (stake returns after unbonding), return after a downtime jail
 //   evidence  two conflicting signed votes from one validator; it is slashed and banned
@@ -35,7 +35,7 @@ const FIELDS = {
   // Sends `amount` that unlocks over time: nothing for lockMonths, then in equal monthly steps over
   // vestMonths (atStart is free right away). Used for team grants and other locked allocations.
   vest: [...ENVELOPE, 'to', 'amount', 'atStart', 'lockMonths', 'vestMonths', 'memo'],
-  // Staking: an owner account bonds ARGENI to a consensus key, which then joins the validator set.
+  // Staking: an owner account bonds CYVBER to a consensus key, which then joins the validator set.
   // Signed by the owner AND the validator key (proves the operator holds it).
   // With `operator`, the stake is delegated: the signer provides it, the operator runs the validator
   // and earns its fees and rewards; the stake returns to the signer when the validator leaves.
@@ -55,13 +55,13 @@ const VOTE_FIELDS = ['type', 'height', 'round', 'blockHash', 'validRound', 'vali
 
 // The hash an account commits to: binds the chain, the old address and the new post-quantum address.
 export function migrationCommitment(chainId, fromAddress, toAddress) {
-  return sha256(`argeni-pq-commit:v1|${chainId}|${fromAddress}|${toAddress}`);
+  return sha256(`cyvber-pq-commit:v1|${chainId}|${fromAddress}|${toAddress}`);
 }
 
 // What a migrate-commit records: binds the old PUBLIC KEY (not its address), so nobody who only knows
 // the address, which is public, can make a commitment for someone else's account.
 export function migrationRevealCommitment(chainId, oldPublicKey, toAddress) {
-  return sha256(`argeni-migrate-commit:v1|${chainId}|${oldPublicKey}|${toAddress}`);
+  return sha256(`cyvber-migrate-commit:v1|${chainId}|${oldPublicKey}|${toAddress}`);
 }
 
 export function txBody(tx) {
@@ -118,7 +118,7 @@ export function createTx(fields, { privateKey, extraSigners = {} } = {}) {
 // made offline by an operator stays valid until the provider submits it. It cannot be reused: a
 // validator key can be registered only once.
 export function validatorConsentBytes({ chainId, validator, operator, amount }) {
-  return canonical({ purpose: 'argeni-validator-join:v1', chainId, validator, operator: operator ?? null, amount: String(amount) });
+  return canonical({ purpose: 'cyvber-validator-join:v1', chainId, validator, operator: operator ?? null, amount: String(amount) });
 }
 
 // The bytes every signer of a transaction signs (also each member of a multisig).
@@ -173,7 +173,7 @@ export function checkTx(tx, { chainId, minFee }, { voteBytes } = {}) {
   const bytes = canonical(txBody(tx));
   switch (tx.type) {
     case 'transfer':
-      if (!isAddress(tx.to)) return 'to must be an Argeni address';
+      if (!isAddress(tx.to)) return 'to must be an CYVBER address';
       if (!positive(tx.amount)) return 'amount must be a positive base-unit integer string';
       break;
     case 'pq-commit':
@@ -192,7 +192,7 @@ export function checkTx(tx, { chainId, minFee }, { voteBytes } = {}) {
       if (!verify(bytes, tx.pqSignature, tx.to)) return 'invalid post-quantum signature';
       break;
     case 'vest':
-      if (!isAddress(tx.to)) return 'to must be an Argeni address';
+      if (!isAddress(tx.to)) return 'to must be an CYVBER address';
       if (!positive(tx.amount)) return 'amount must be a positive base-unit integer string';
       if (tx.atStart !== undefined && (!isUnits(tx.atStart) || BigInt(tx.atStart) > BigInt(tx.amount))) return 'atStart must be at most amount';
       if (!Number.isSafeInteger(tx.lockMonths) || tx.lockMonths < 0 || tx.lockMonths > MAX_VESTING_MONTHS) return `lockMonths must be 0-${MAX_VESTING_MONTHS}`;
@@ -202,7 +202,7 @@ export function checkTx(tx, { chainId, minFee }, { voteBytes } = {}) {
     case 'validator-join':
       if (!PQ_KEY_TYPES.includes(keyTypeOf(tx.validator)) || !isPublicKey(tx.validator)) return 'validator must be a post-quantum public key';
       if (!positive(tx.amount)) return 'amount must be a positive base-unit integer string';
-      if (tx.operator !== undefined && !isAddress(tx.operator)) return 'operator must be an Argeni address';
+      if (tx.operator !== undefined && !isAddress(tx.operator)) return 'operator must be an CYVBER address';
       if (!verify(validatorConsentBytes(tx), tx.validatorSignature, tx.validator)) return 'invalid validator signature (the validator key must sign too)';
       break;
     case 'validator-bond':

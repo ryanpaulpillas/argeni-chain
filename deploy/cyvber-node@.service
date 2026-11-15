@@ -1,15 +1,15 @@
-# One Argeni node; %i is the node number (argeni-node@1 … argeni-node@4).
+# One CYVBER node; %i is the node number (cyvber-node@1 … cyvber-node@4).
 [Unit]
-Description=Argeni testnet node %i
+Description=CYVBER testnet node %i
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=argeni
-Group=argeni
-WorkingDirectory=/opt/argeni/chain
-ExecStart=/usr/bin/node /opt/argeni/chain/src/cli.js node --config /opt/argeni/testnet/node-%i.json
+User=cyvber
+Group=cyvber
+WorkingDirectory=/opt/cyvber/chain
+ExecStart=/usr/bin/node /opt/cyvber/chain/src/cli.js node --config /opt/cyvber/testnet/node-%i.json
 Restart=always
 RestartSec=3
 # Hardening: the node only needs to read its code and write its own data directory.
@@ -17,7 +17,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/opt/argeni/testnet/data
+ReadWritePaths=/opt/cyvber/testnet/data
 
 [Install]
 WantedBy=multi-user.target

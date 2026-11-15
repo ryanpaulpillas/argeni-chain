@@ -24,7 +24,7 @@ function setup({ tripwire = { bounties: Object.fromEntries(RUNG_IDS.map((id) => 
   const thief = generateKeyPair('ml-dsa-65');
   const alloc = Object.fromEntries([legacy, committed, hunter, thief].map((k) => [addressFromPublicKey(k.publicKey), (100n * ONE).toString()]));
   const genesis = {
-    chainId: 'argeni-tripwire-test', timestamp: 1_000_000, coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 },
+    chainId: 'cyvber-tripwire-test', timestamp: 1_000_000, coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 },
     blockTimeMs: 1000, maxTxsPerBlock: 100, minFee: FEE.toString(), blockReward: '0', maxSupply: BILLION.toString(),
     validators: keys.map((k) => k.publicKey), alloc,
     ...(tripwire ? { tripwire } : {}),
@@ -224,7 +224,7 @@ test('end to end: a node publishes the ladder and accepts a claim over HTTP', as
   const validator = generateKeyPair('ml-dsa-65');
   const hunter = generateKeyPair('ml-dsa-65');
   const genesis = {
-    chainId: 'argeni-tripwire-e2e', timestamp: Date.now(), coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 },
+    chainId: 'cyvber-tripwire-e2e', timestamp: Date.now(), coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 },
     blockTimeMs: 100, emptyBlockIntervalMs: 100, maxTxsPerBlock: 100, minFee: FEE.toString(), blockReward: '0', maxSupply: BILLION.toString(),
     validators: [validator.publicKey], alloc: { [addressFromPublicKey(hunter.publicKey)]: (100n * ONE).toString() },
     tripwire: { bounties: { 'ecc-160': BOUNTY.toString(), 'ecc-256': (5n * BOUNTY).toString() }, revealDelayBlocks: 2 },
@@ -239,7 +239,7 @@ test('end to end: a node publishes the ladder and accepts a claim over HTTP', as
     const ladder = await fetchJson(`${url}/tripwire`);
     assert.equal(ladder.level, 0);
     assert.deepEqual(ladder.rungs.map((r) => r.id), ['ecc-160', 'ecc-256']);
-    assert.equal(ladder.rungs[1].bounty, '5000000 ARGENI');
+    assert.equal(ladder.rungs[1].bounty, '5000000 CYVBER');
     assert.equal(BigInt('0x' + ladder.rungs[1].target.x), rungPoint('ecc-256').x);
 
     const d = weakTarget('ecc-160');
@@ -251,7 +251,7 @@ test('end to end: a node publishes the ladder and accepts a claim over HTTP', as
     await waitFor(async () => (await fetchJson(`${url}/tripwire`)).level === 1);
     const after = await fetchJson(`${url}/tripwire`);
     assert.equal(after.rungs[0].broken.by, hunterAddr);
-    assert.equal(after.bountyPoolLeft, '5000000 ARGENI');
+    assert.equal(after.bountyPoolLeft, '5000000 CYVBER');
     assert.equal((await fetchJson(`${url}/accounts/${hunterAddr}`)).balance, (100n * ONE + BOUNTY - 2n * FEE).toString()); // deposit refunded with the bounty
   } finally {
     await node.stop();

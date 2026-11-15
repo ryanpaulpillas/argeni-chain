@@ -23,7 +23,7 @@
 import crypto from 'node:crypto';
 import { sha256 } from './crypto.js';
 
-export const TRIPWIRE_SEED = 'ARGENI Q-Day Tripwire v1';
+export const TRIPWIRE_SEED = 'CYVBER Q-Day Tripwire v1';
 const ED25519_LEVEL3 = 3;
 
 // SEC 2 / FIPS 186 curve parameters (all have cofactor 1, so every curve point is in the prime-order group).
@@ -238,7 +238,7 @@ function verifySolution(rung, norm) {
 
 // What a claimant commits to first: binds the chain, the rung, the claimer and the solution.
 export function canaryCommitment(chainId, rung, fromAddress, solution) {
-  return sha256(`argeni-canary:v1|${chainId}|${rung}|${fromAddress}|${normalizeSolution(rung, solution) ?? ''}`);
+  return sha256(`cyvber-canary:v1|${chainId}|${rung}|${fromAddress}|${normalizeSolution(rung, solution) ?? ''}`);
 }
 
 // ---- genesis settings ----

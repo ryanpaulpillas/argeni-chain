@@ -34,9 +34,9 @@ function makeNet(n, networkOptions, genesisExtra = {}, signLogs = []) {
   const keys = Array.from({ length: n }, generateKeyPair);
   const faucet = generateKeyPair();
   const genesis = {
-    chainId: 'argeni-consensus-test',
+    chainId: 'cyvber-consensus-test',
     timestamp: Date.now(),
-    coin: { name: 'Argeni', symbol: 'ARGENI', decimals: 18 },
+    coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 },
     blockTimeMs: 40,
     maxTxsPerBlock: 100,
     minFee: '1000',
