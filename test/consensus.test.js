@@ -124,6 +124,40 @@ test('validators restarted in different rounds, with one offline, still reach a 
   }
 });
 
+test('a proposer that resumes with a saved proposal it cannot vote on still lets the round move on', async () => {
+  // After a restart the round's proposer re-sends the proposal it saved before stopping. It re-proposes
+  // a block from round 0 (validRound 0), which needs round-0 prevotes nobody has in memory any more.
+  const t0 = makeNet(4);
+  const round = 1;
+  const proposerIndex = t0.keys.findIndex((k) => t0.nodes[0].chain.proposerFor(1, round) === k.publicKey);
+  const proposer = t0.keys[proposerIndex];
+  const block = t0.nodes[proposerIndex].chain.buildBlock(proposer.publicKey);
+  const saved = { type: 'proposal', height: 1, round, validRound: 0, blockHash: block.hash, block, validator: proposer.publicKey };
+  saved.signature = sign(voteSignBytes(t0.genesis.chainId, saved), proposer.privateKey);
+  const logs = t0.keys.map((_, i) => {
+    let record = { height: 1, round, msgs: i === proposerIndex ? { proposal: saved } : {} };
+    return { read: () => record, write: (r) => { record = r; } };
+  });
+  // Same keys and genesis, restarted with those signing records; one other validator stays offline.
+  const net = new Network();
+  const nodes = t0.keys.map((key, i) => {
+    const chain = new Chain(t0.genesis);
+    const consensus = new Consensus({ chain, privateKey: key.privateKey, broadcast: (msg) => net.send(key.publicKey, msg), signLog: logs[i] });
+    net.members.set(key.publicKey, consensus);
+    return { key, chain, consensus };
+  });
+  const offline = (proposerIndex + 1) % 4;
+  net.down.add(t0.keys[offline].publicKey);
+  nodes.forEach((n) => n.consensus.start());
+  try {
+    const live = nodes.filter((_, i) => i !== offline);
+    await waitFor(() => live.every((n) => n.chain.height >= 2));
+    assertAgreement(live);
+  } finally {
+    nodes.forEach((n) => n.consensus.stop());
+  }
+});
+
 test('with two of four offline nothing is finalized; when one returns the chain resumes', async () => {
   const t = makeNet(4);
   t.net.down.add(t.keys[0].publicKey);

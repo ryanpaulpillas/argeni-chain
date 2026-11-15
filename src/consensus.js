@@ -146,15 +146,17 @@ export class Consensus {
     if (this.chain.proposerFor(this.height, round) === this.me) {
       const block = this.validBlock ?? this.chain.buildBlock(this.me);
       this.#send({ type: 'proposal', height: this.height, round, validRound: this.validRound, blockHash: block.hash, block });
-    } else {
-      const { height } = this;
-      this.#schedule(this.#timeout(3, round), () => {
-        if (this.height === height && this.round === round && this.step === 'propose') {
-          this.#vote('prevote', null);
-          this.#evaluate();
-        }
-      });
     }
+    // Every validator, the proposer included, prevotes nil if the round's proposal can't be voted on in
+    // time. A proposer resumed after a restart may re-send a saved proposal that needs prevotes it no
+    // longer has in memory; without its own timeout it would wait in 'propose' forever.
+    const { height } = this;
+    this.#schedule(this.#timeout(3, round), () => {
+      if (this.height === height && this.round === round && this.step === 'propose') {
+        this.#vote('prevote', null);
+        this.#evaluate();
+      }
+    });
     this.#scheduleStallCheck(round);
     this.#evaluate();
   }
