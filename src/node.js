@@ -10,6 +10,7 @@ import { createTransfer, createTx, txHash } from './tx.js';
 import { formatAmount, parseAmount } from './coin.js';
 import { RUNG_IDS, LEVEL_NAMES, alertLevel, rungInfo } from './tripwire.js';
 import { assetView } from './rwa.js';
+import { Firewall } from './firewall.js';
 import { totalLocked, vestingEnd } from './state.js';
 
 // Post-quantum (ML-DSA-65) signatures are ~3.3 KB each, so blocks and proposals can be a few MB.
@@ -26,12 +27,14 @@ export class Node {
   //   trustProxy: take the client IP from X-Forwarded-For when the request comes from a local reverse proxy
   //   faucetAddressCooldownMs / faucetIpCooldownMs: how often one address / one IP may use the faucet
   //   txsPerMinutePerIp: cap on POST /txs per client IP (0 = unlimited)
+  //   firewall: options for the node firewall (firewall.js), e.g. { rates: { tx: 60 }, allow: ['203.0.113.7'] };
+  //   on by default; loopback is exempt unless firewall.exemptLocal is false
   // Fast sync: snapshotEvery = keep a snapshot of the state every N blocks for new nodes to start
   // from; trustedBlock = { height, hash } makes an empty node start from that snapshot (taken from
   // a peer, checked against the hash) instead of replaying every block since genesis.
   constructor({ genesis, dataDir = null, port = 0, host = '127.0.0.1', peers = [], validatorKey = null, faucetKey = null, faucetAmount = '100',
     trustProxy = false, faucetAddressCooldownMs = 60_000, faucetIpCooldownMs = 0, txsPerMinutePerIp = 0, snapshotEvery = 1000, trustedBlock = null,
-    publicUrl = null, encryptPeers = true, log = console.log }) {
+    publicUrl = null, encryptPeers = true, firewall = {}, log = console.log }) {
     this.genesis = genesis;
     this.dataDir = dataDir;
     this.chain = new Chain(genesis, { dataDir });
@@ -57,6 +60,12 @@ export class Node {
     this.port = port;
     this.host = host;
     this.peers = peers.map((p) => p.replace(/\/$/, ''));
+    this.configuredPeers = new Set(this.peers);
+    this.trustedIdentities = new Set(); // identities of configured peers, learned at our handshakes with them
+    this.firewall = new Firewall(firewall, {
+      log: (m) => this.log(m),
+      trustedPeer: (key) => this.trustedIdentities.has(key) || this.chain.validators.has(key),
+    });
     this.validatorKey = validatorKey;
     this.faucetKey = faucetKey;
     this.faucetUnits = parseAmount(faucetAmount, genesis.coin.decimals);
@@ -71,6 +80,17 @@ export class Node {
 
   async start() {
     this.server = http.createServer((req, res) => this.#handle(req, res));
+    // Firewall layer 1: drop blocked addresses before reading anything, cap connections per address,
+    // and time out slow senders (slowloris) instead of holding sockets forever.
+    this.server.on('connection', (socket) => {
+      const ip = socket.remoteAddress ?? '';
+      if (!this.firewall.connectionOpened(ip)) return socket.destroy();
+      socket.once('close', () => this.firewall.connectionClosed(ip));
+    });
+    this.server.headersTimeout = 10_000;
+    this.server.requestTimeout = 60_000;
+    this.server.keepAliveTimeout = 5_000;
+    this.server.maxHeadersCount = 64;
     await new Promise((resolve, reject) => {
       this.server.once('error', (err) => reject(err.code === 'EADDRINUSE' ? new Error(`port ${this.port} is already in use (is another node running?)`) : err));
       this.server.listen(this.port, this.host, resolve);
@@ -85,7 +105,7 @@ export class Node {
     this.timers.push(setInterval(() => this.sync(), SYNC_INTERVAL_MS));
     this.timers.push(setInterval(() => this.#announce(), 60_000));
     this.timers.push(setInterval(() => this.#pruneSessions(), 60_000));
-    this.timers.push(setInterval(() => [this.faucetAddressLimit, this.faucetIpLimit, this.txLimit].forEach((l) => l.prune()), PRUNE_INTERVAL_MS));
+    this.timers.push(setInterval(() => [this.faucetAddressLimit, this.faucetIpLimit, this.txLimit, this.firewall].forEach((l) => l.prune()), PRUNE_INTERVAL_MS));
     if (this.validatorKey) {
       this.consensus = new Consensus({
         chain: this.chain,
@@ -258,6 +278,7 @@ export class Node {
       const reply = await fetchJson(`${peer}/p2p/handshake`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hello }) });
       const session = completeHello(hello, kemPrivateKey, reply, { expectedPeerKey: this.pinnedPeers.get(peer) ?? null });
       if (!this.pinnedPeers.has(peer)) this.pinnedPeers.set(peer, session.peerKey);
+      if (this.configuredPeers.has(peer)) this.trustedIdentities.add(session.peerKey); // the operator's own peers are never banned
       return session;
     })();
     opening.expiredAt = () => false;
@@ -318,15 +339,18 @@ export class Node {
   }
 
   // POST /p2p/handshake and POST /p2p: answer a peer over the encrypted channel.
-  async #p2p(parts, body, res) {
+  async #p2p(parts, body, res, ip) {
     const ctx = { chainId: this.genesis.chainId, genesisHash: this.chain.genesisHash, identityKey: this.identityKey, identityPublicKey: this.identityPublic, seenNonces: this.helloNonces };
     if (parts[1] === 'handshake' && parts.length === 2) {
       let accepted;
       try {
         accepted = acceptHello(body?.hello, ctx);
       } catch (err) {
+        this.firewall.penalize(ip, 'bad-handshake');
         return send(res, 400, { error: `handshake refused: ${err.message}` });
       }
+      const banned = this.firewall.peerBannedFor(accepted.session.peerKey);
+      if (banned) return send(res, 403, { error: `this node identity is blocked for ${Math.ceil(banned / 1000)} s after invalid messages` });
       if (this.inbound.size >= MAX_INBOUND_SESSIONS) {
         const oldest = [...this.inbound.values()].sort((a, b) => a.lastUsed - b.lastUsed)[0];
         this.inbound.delete(oldest.sid);
@@ -336,11 +360,22 @@ export class Node {
     }
     if (parts.length !== 1) return send(res, 404, { error: 'not found' });
     const session = this.inbound.get(body?.sid);
-    if (!session) return send(res, 409, { error: 'unknown session; shake hands again' });
+    if (!session) {
+      this.firewall.penalize(ip, 'unknown-session');
+      return send(res, 409, { error: 'unknown session; shake hands again' });
+    }
+    if (this.firewall.peerBannedFor(session.peerKey)) {
+      this.inbound.delete(session.sid);
+      return send(res, 403, { error: 'this node identity is blocked after invalid messages' });
+    }
     let request;
     try {
       request = session.decryptRequest(body);
     } catch (err) {
+      // Failed authentication means the message was forged or altered; a replay is cheaper to forgive.
+      const reason = /replayed/.test(err.message) ? 'unknown-session' : 'tampered';
+      this.firewall.penalize(ip, reason);
+      this.firewall.penalizePeer(session.peerKey, reason);
       return send(res, 400, { error: err.message });
     }
     const url = new URL(String(request?.path ?? ''), 'http://local');
@@ -361,16 +396,45 @@ export class Node {
   async #handle(req, res) {
     res.setHeader('access-control-allow-origin', '*');
     res.setHeader('access-control-allow-headers', 'content-type');
+    res.setHeader('x-content-type-options', 'nosniff');
+    res.setHeader('referrer-policy', 'no-referrer');
     if (req.method === 'OPTIONS') return send(res, 204, null);
-    const url = new URL(req.url, 'http://local');
+    let url;
+    try {
+      url = new URL(req.url, 'http://local');
+    } catch {
+      return send(res, 400, { error: 'bad request' });
+    }
     const parts = url.pathname.split('/').filter(Boolean);
+    const ip = this.#clientIp(req);
+    // Firewall layers 2-4: rate per kind of request, body size per route, points for misbehaviour.
+    const kind = req.method !== 'POST' ? 'read'
+      : parts[0] === 'p2p' ? (parts[1] === 'handshake' ? 'handshake' : 'p2p')
+        : parts[0] === 'txs' ? 'tx' : parts[0] === 'faucet' ? 'faucet' : 'other';
+    const blocked = this.firewall.checkRequest(ip, kind);
+    if (blocked) {
+      res.setHeader('retry-after', String(Math.max(1, Math.ceil(blocked.retryAfterMs / 1000))));
+      return send(res, blocked.status, { error: blocked.error });
+    }
+    res.once('finish', () => {
+      if (res.statusCode === 404) this.firewall.penalize(ip, 'not-found');
+    });
     try {
       if (req.method === 'GET' && parts.length === 1 && parts[0] === 'network') return send(res, 200, await this.#network());
+      if (req.method === 'GET' && parts.length === 1 && parts[0] === 'firewall') {
+        // Blocked addresses are shown only to the node's own operator (a direct local connection).
+        const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) && !req.headers['x-forwarded-for'];
+        return send(res, 200, this.firewall.status({ detail: local }));
+      }
       if (req.method === 'GET') return this.#get(parts, res, url.searchParams);
-      if (req.method === 'POST' && parts[0] === 'p2p') return await this.#p2p(parts, await readJson(req), res);
-      if (req.method === 'POST') return this.#post(parts, await readJson(req), res, this.#clientIp(req));
+      const limit = this.firewall.bodyLimit(kind);
+      if (req.method === 'POST' && parts[0] === 'p2p') return await this.#p2p(parts, await readJson(req, limit), res, ip);
+      if (req.method === 'POST') return this.#post(parts, await readJson(req, limit), res, ip);
+      this.firewall.penalize(ip, 'bad-method');
       return send(res, 405, { error: 'method not allowed' });
     } catch (err) {
+      if (err.status === 400) this.firewall.penalize(ip, 'bad-json');
+      if (err.status === 413) this.firewall.penalize(ip, 'too-large');
       return send(res, err.status ?? 500, { error: err.status ? err.message : 'internal error' });
     }
   }
@@ -570,12 +634,14 @@ export class Node {
     return value;
   }
 
-  // The caller's IP. Behind a reverse proxy on this machine, the real client is in X-Forwarded-For.
+  // The caller's IP. Behind a reverse proxy on this machine, the real client is the LAST entry of
+  // X-Forwarded-For: that one is added by our proxy. Earlier entries come from the client and can be
+  // forged (e.g. "127.0.0.1" to pass as local and slip past the firewall).
   #clientIp(req) {
     const remote = req.socket.remoteAddress ?? '';
     const local = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
     if (this.trustProxy && local) {
-      const forwarded = String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim();
+      const forwarded = String(req.headers['x-forwarded-for'] ?? '').split(',').map((x) => x.trim()).filter(Boolean).at(-1);
       if (forwarded) return forwarded;
     }
     return remote;
@@ -591,7 +657,12 @@ export class Node {
       const wait = fromPeer ? 0 : this.txLimit.check(ip);
       if (wait) return send(res, 429, { error: `too many transactions from your address, try again in ${formatWait(wait)}` });
       const result = chain.addTx(body);
-      if (!result.ok) return send(res, 400, { error: result.error });
+      if (!result.ok) {
+        // Wallets with a stale nonce or low balance make honest mistakes, so those cost little; a forged
+        // signature costs more. Transactions relayed by peers are not scored (they may just be late).
+        if (!fromPeer) this.firewall.penalize(ip, /signature/.test(result.error) ? 'bad-signature' : 'invalid-tx');
+        return send(res, 400, { error: result.error });
+      }
       if (!result.known) this.#broadcast('/txs', body);
       return send(res, 202, { hash: result.hash });
     }
@@ -603,7 +674,10 @@ export class Node {
         return send(res, 202, { ok: true, syncing: true });
       }
       const result = chain.addBlock(body);
-      if (!result.ok) return send(res, 400, { error: result.error });
+      if (!result.ok) {
+        if (fromPeer) this.firewall.penalizePeer(peerKey, 'invalid-block');
+        return send(res, 400, { error: result.error });
+      }
       this.log(`accepted finalized block ${height} (${body.txs.length} txs) from peer`);
       this.#relay('/blocks', body, peerKey);
       return send(res, 200, { ok: true });
@@ -616,7 +690,10 @@ export class Node {
       if (id && this.relayed.has(id)) return send(res, 200, { ok: true, known: true });
       const result = this.consensus ? this.consensus.handle(body) : (body?.type === 'commit' ? this.#acceptCommit(body) : { ok: true });
       if (result.ahead) this.sync();
-      if (!result.ok) return send(res, 400, { error: result.error });
+      if (!result.ok) {
+        if (fromPeer) this.firewall.penalizePeer(peerKey, 'invalid-consensus');
+        return send(res, 400, { error: result.error });
+      }
       if (id) {
         this.relayed.add(id);
         if (this.relayed.size > 20_000) this.relayed.delete(this.relayed.values().next().value);
@@ -797,13 +874,18 @@ function send(res, status, body) {
   res.end(body === null ? undefined : JSON.stringify(body));
 }
 
-function readJson(req) {
+function readJson(req, limit = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
+    if (Number(req.headers['content-length']) > limit) { // refuse before reading anything
+      reject(Object.assign(new Error('request body too large'), { status: 413 }));
+      req.resume();
+      return;
+    }
     let size = 0;
     const chunks = [];
     req.on('data', (chunk) => {
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > limit) {
         reject(Object.assign(new Error('request body too large'), { status: 413 }));
         req.destroy();
         return;

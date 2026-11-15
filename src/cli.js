@@ -76,6 +76,10 @@ Q-Day Tripwire (bounties for proof that classical cryptography is broken)
                                               solution, pays the bounty and raises its alert level
                                               (rungs: ${RUNG_IDS.join(', ')}; rsa-2048 solution is "<p hex>.<q hex>")
 
+Node firewall
+  firewall [--rpc <url>]                      show the firewall's rules, counters and (on your own node)
+                                              the addresses and peer identities it is blocking
+
 Real-world assets (ARS-1; every administrator key must be post-quantum)
   asset list [--rpc <url>]                    list tokenized assets
   asset show <assetId> [--rpc <url>]          one asset: roles, rules, documents, holders
@@ -216,6 +220,7 @@ async function main(argv) {
         snapshotEvery: config.snapshotEvery,
         trustedBlock: config.trustedBlock ?? null,
         publicUrl: config.publicUrl ?? null,
+        firewall: config.firewall ?? {},
       });
       // Node.js 24's built-in fetch (undici) can throw setTypeOfService EINVAL from a socket callback
       // when a peer connection closes mid-request; nothing can catch it, and it would stop the validator.
@@ -258,6 +263,19 @@ async function main(argv) {
       console.log(sub === 'commit'
         ? `committed a claim on ${values.rung} (only a hash is public)\nreveal after ${genesis.tripwire?.revealDelayBlocks ?? 10} blocks with: argeni canary reveal --key ${values.key} --rung ${values.rung} --solution <same>\ntx ${hash}`
         : `revealed the solution for ${values.rung}; if it is valid the bounty is paid in the next block\ntx ${hash}`);
+      return;
+    }
+    case 'firewall': {
+      const fw = await fetchJson(`${rpc}/firewall`);
+      const r = fw.rules;
+      console.log(`firewall ${fw.enabled ? 'ON' : 'OFF'} · layers: ${fw.layers.join(', ')}`);
+      console.log(`  requests per minute per address: ${Object.entries(r.requestsPerMinute).map(([k, v]) => `${k} ${v}`).join(', ')}`);
+      console.log(`  connections per address: ${r.maxConnectionsPerIp} · ban at ${r.banThresholdPoints} points, ${r.banMinutes[0]} min doubling up to ${r.banMinutes[1] / 60} h`);
+      const st = fw.stats;
+      console.log(`  dropped connections ${st.droppedConnections} · refused requests ${st.refusedRequests} · bans ${st.bans} · peer bans ${st.peerBans} · open connections ${st.openConnections}`);
+      console.log(`  blocked now: ${fw.blocked.addresses} address(es), ${fw.blocked.peerIdentities} peer identit${fw.blocked.peerIdentities === 1 ? 'y' : 'ies'}`);
+      for (const b of fw.blockedAddresses ?? []) console.log(`    ${b.address.padEnd(28)} ${Math.ceil(b.untilMs / 1000)} s left, strike ${b.strikes}, ${Object.entries(b.reasons).map(([k, v]) => `${k} ×${v}`).join(', ')}`);
+      for (const b of fw.blockedPeers ?? []) console.log(`    peer ${b.identity}… ${Math.ceil(b.untilMs / 1000)} s left, ${Object.entries(b.reasons).map(([k, v]) => `${k} ×${v}`).join(', ')}`);
       return;
     }
     case 'asset': {

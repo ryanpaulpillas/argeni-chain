@@ -113,6 +113,15 @@ This takes 3–5 minutes. It installs Node.js and Caddy, creates the testnet wit
 keys, starts 4 validators, turns on HTTPS and the firewall, and prints the network's status at
 the end.
 
+The nodes also run their own firewall (on by default; `src/firewall.js`): per-address rate
+limits for each kind of request (the post-quantum handshake has the tightest), body limits per
+route, connection caps, timeouts for slow senders, and bans that start at 1 minute and double up
+to 24 hours for addresses that keep sending malformed or forged data. Peers that send invalid
+blocks or consensus messages are refused by their post-quantum identity, so changing IP doesn't
+help them; the validators themselves are never cut off. Check it with `node src/cli.js firewall`
+on the server (it lists blocked addresses there) or `GET /firewall`. Tune it with a `firewall`
+section in a node's config, e.g. `"firewall": { "rates": { "tx": 60 }, "allow": ["203.0.113.7"] }`.
+
 **9. Open** https://argeni.io and https://explorer.argeni.io. If HTTPS isn't ready yet, wait a
 minute: the certificates are requested the first time.
 
