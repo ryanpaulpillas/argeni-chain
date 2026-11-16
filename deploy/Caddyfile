@@ -31,6 +31,6 @@ faucet.cyvber.com {
 }
 
 # The other domains we own forward to the main site, keeping the path.
-cyvber.io, www.cyvber.io, cyvber.org, www.cyvber.org {
+cyvber.io, www.cyvber.io, cyvber.org, www.cyvber.org, cyvber.co, www.cyvber.co, cyvber.net, www.cyvber.net {
 	redir https://cyvber.com{uri} permanent
 }

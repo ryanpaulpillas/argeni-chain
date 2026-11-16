@@ -70,7 +70,7 @@ server's IP:
 - If there is a **CNAME for `www`**, delete it before adding the A record.
 - Don't touch **MX** records if you use email on cyvber.com.
 
-**cyvber.io and cyvber.org** (also ours) forward to cyvber.com. In GoDaddy, give each of them two
+**cyvber.io, cyvber.org, cyvber.co and cyvber.net** (also ours) forward to cyvber.com. In GoDaddy, give each of them two
 A records pointing at the same server IP: `@` and `www`. Caddy then redirects them to
 https://cyvber.com with HTTPS. Don't use GoDaddy's own Forwarding for them; it can't do HTTPS.
 
