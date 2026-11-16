@@ -5,8 +5,11 @@
 set -euo pipefail
 
 CHAIN="$(cd "$(dirname "$0")/.." && pwd)"
-SITE="${SITE:-$CHAIN/../cyvber-site}"
-ASSISTANT="${ASSISTANT:-$CHAIN/../cyvber-assistant}"
+# The website and assistant folders sit next to this one (older checkouts still use argeni-* names).
+pick() { for d in "$@"; do [ -d "$d" ] && { echo "$d"; return; }; done; echo "$1"; }
+SITE="${SITE:-$(pick "$CHAIN/../cyvber-site" "$CHAIN/../argeni-site")}"
+ASSISTANT="${ASSISTANT:-$(pick "$CHAIN/../cyvber-assistant" "$CHAIN/../argeni-assistant")}"
+[ -d "$SITE" ] || { echo "Website folder not found: $SITE (set SITE=/path/to/site)"; exit 1; }
 OUT="${OUT:-$PWD/cyvber-bundle.tar.gz}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -19,7 +22,8 @@ if [ -d "$ASSISTANT" ]; then
   cp "$ASSISTANT/server.mjs" "$ASSISTANT/package.json" "$ASSISTANT/package-lock.json" "$TMP/cyvber-bundle/assistant/"
 fi
 # foundations.html is hidden from the site on purpose, so it is not published.
-rsync -a --exclude foundations.html --exclude '.DS_Store' "$SITE/" "$TMP/cyvber-bundle/site/"
+# tripwire.html is an unpublished draft of the paper; .git is the site's history. Neither goes online.
+rsync -a --exclude foundations.html --exclude tripwire.html --exclude '.git' --exclude '.DS_Store' "$SITE/" "$TMP/cyvber-bundle/site/"
 
 # Key files are JSON files holding a private key; none may be published.
 if grep -rlqE --include='*.json' 'privateKey' "$TMP/cyvber-bundle" || grep -rlqE 'sk-ant-[A-Za-z0-9_-]{30,}' "$TMP/cyvber-bundle"; then
