@@ -173,7 +173,7 @@ export function checkTx(tx, { chainId, minFee }, { voteBytes } = {}) {
   const bytes = canonical(txBody(tx));
   switch (tx.type) {
     case 'transfer':
-      if (!isAddress(tx.to)) return 'to must be an CYVBER address';
+      if (!isAddress(tx.to)) return 'to must be a CYVBER address';
       if (!positive(tx.amount)) return 'amount must be a positive base-unit integer string';
       break;
     case 'pq-commit':
@@ -192,7 +192,7 @@ export function checkTx(tx, { chainId, minFee }, { voteBytes } = {}) {
       if (!verify(bytes, tx.pqSignature, tx.to)) return 'invalid post-quantum signature';
       break;
     case 'vest':
-      if (!isAddress(tx.to)) return 'to must be an CYVBER address';
+      if (!isAddress(tx.to)) return 'to must be a CYVBER address';
       if (!positive(tx.amount)) return 'amount must be a positive base-unit integer string';
       if (tx.atStart !== undefined && (!isUnits(tx.atStart) || BigInt(tx.atStart) > BigInt(tx.amount))) return 'atStart must be at most amount';
       if (!Number.isSafeInteger(tx.lockMonths) || tx.lockMonths < 0 || tx.lockMonths > MAX_VESTING_MONTHS) return `lockMonths must be 0-${MAX_VESTING_MONTHS}`;
@@ -202,7 +202,7 @@ export function checkTx(tx, { chainId, minFee }, { voteBytes } = {}) {
     case 'validator-join':
       if (!PQ_KEY_TYPES.includes(keyTypeOf(tx.validator)) || !isPublicKey(tx.validator)) return 'validator must be a post-quantum public key';
       if (!positive(tx.amount)) return 'amount must be a positive base-unit integer string';
-      if (tx.operator !== undefined && !isAddress(tx.operator)) return 'operator must be an CYVBER address';
+      if (tx.operator !== undefined && !isAddress(tx.operator)) return 'operator must be a CYVBER address';
       if (!verify(validatorConsentBytes(tx), tx.validatorSignature, tx.validator)) return 'invalid validator signature (the validator key must sign too)';
       break;
     case 'validator-bond':

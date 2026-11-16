@@ -34,7 +34,7 @@ export function buildGenesis(config) {
   const errors = [];
   const a = config.addresses ?? {};
   for (const name of ['ecosystem', 'treasury', 'publicDistribution', 'partners', 'teamPool', 'liquidity']) {
-    if (!isAddress(a[name] ?? '')) errors.push(`addresses.${name} must be an CYVBER address`);
+    if (!isAddress(a[name] ?? '')) errors.push(`addresses.${name} must be a CYVBER address`);
   }
   const founders = Object.entries(a.founders ?? {});
   if (!founders.every(([addr, amt]) => isAddress(addr) && /^[1-9]\d*$/.test(String(amt)))) errors.push('addresses.founders must map founder addresses to whole CYVBER amounts');

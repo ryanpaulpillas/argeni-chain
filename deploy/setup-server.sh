@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sets up an CYVBER testnet server on Ubuntu 22.04 or 24.04. Run as root from the unpacked bundle:
+# Sets up a CYVBER testnet server on Ubuntu 22.04 or 24.04. Run as root from the unpacked bundle:
 #
 #   TREASURY=cy...your-treasury-address ANTHROPIC_API_KEY=sk-ant-... bash cyvber-bundle/chain/deploy/setup-server.sh
 #
