@@ -2,7 +2,7 @@
 //
 //   node scripts/init-testnet.js --treasury <cy… address> [--validators 4] [--out testnet]
 //
-// The treasury (435,865,000 test CYVBER) is only an ADDRESS here: its key is created on the
+// The treasury (435,865,000 test CYV) is only an ADDRESS here: its key is created on the
 // operator's own computer and never touches the server. Validator and faucet keys are created
 // here, post-quantum (ML-DSA-87), readable only by the user running this script.
 import fs from 'node:fs';
@@ -48,7 +48,7 @@ const TRIPWIRE_TOTAL = '3135000';
 const genesis = {
   chainId: values['chain-id'],
   timestamp: Date.now(),
-  coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: DECIMALS },
+  coin: { name: 'CYVBER', symbol: 'CYV', decimals: DECIMALS },
   blockTimeMs: 2000,
   emptyBlockIntervalMs: 60_000, // idle chain: one heartbeat block a minute instead of one every 2 s
   maxTxsPerBlock: 200, // post-quantum transactions are ~10 KB each
@@ -105,8 +105,8 @@ for (let i = 1; i <= count; i++) {
 console.log(`testnet created in ${root}
 chain id    ${genesis.chainId}
 validators  ${count} (ML-DSA-87, post-quantum, NIST category 5)
-treasury    ${values.treasury}  435,865,000 test CYVBER (key stays off this server)
-tripwire    3,135,000 test CYVBER in Q-Day bounties on 6 bait keys
-rewards     60,000,000 test CYVBER validator pool, paid by the chain (24M, 18M, 12M, 6M a year)
-faucet      ${faucet.address}  1,000,000 test CYVBER, served by node 1
+treasury    ${values.treasury}  435,865,000 test CYV (key stays off this server)
+tripwire    3,135,000 test CYV in Q-Day bounties on 6 bait keys
+rewards     60,000,000 test CYV validator pool, paid by the chain (24M, 18M, 12M, 6M a year)
+faucet      ${faucet.address}  1,000,000 test CYV, served by node 1
 Back up ${path.join(root, 'keys')} somewhere safe and private.`);

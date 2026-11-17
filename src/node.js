@@ -741,7 +741,7 @@ export class Node {
     const address = body?.address;
     if (!isAddress(address)) return send(res, 400, { error: 'invalid address' });
     const addressWait = this.faucetAddressLimit.peek(address);
-    if (addressWait) return send(res, 429, { error: `this address already received test CYVBER, try again in ${formatWait(addressWait)}` });
+    if (addressWait) return send(res, 429, { error: `this address already received test CYV, try again in ${formatWait(addressWait)}` });
     const ipWait = this.faucetIpLimit.peek(ip);
     if (ipWait) return send(res, 429, { error: `the faucet was already used from your network, try again in ${formatWait(ipWait)}` });
     const { chain } = this;

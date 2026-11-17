@@ -36,7 +36,7 @@ if ! command -v caddy >/dev/null; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y caddy
 fi
 
-echo "== 4/6 CYVBER code and website"
+echo "== 4/6 CYV code and website"
 id cyvber >/dev/null 2>&1 || useradd --system --home-dir /opt/cyvber --shell /usr/sbin/nologin cyvber
 mkdir -p /opt/cyvber
 rm -rf /opt/cyvber/chain.new /opt/cyvber/site.new

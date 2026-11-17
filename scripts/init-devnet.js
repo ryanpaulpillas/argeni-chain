@@ -11,7 +11,7 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'devn
 const VALIDATORS = 4;
 const BASE_PORT = 26601;
 const DECIMALS = 18;
-const MAX_SUPPLY = '500000000'; // 500 million CYVBER, all created at genesis
+const MAX_SUPPLY = '500000000'; // 500 million CYV, all created at genesis
 const FAUCET_SHARE = '1000000';
 const REWARD_POOL = '60000000'; // validator incentives, paid out by the chain
 // Q-Day Tripwire bounties (CYVBER), rising with the strength of the bait key.
@@ -29,13 +29,13 @@ const validators = Array.from({ length: VALIDATORS }, (_, i) => writeKeyFile(pat
 const faucet = writeKeyFile(path.join(root, 'keys', 'faucet.json'), generateKeyPair('ml-dsa-87'));
 const treasury = writeKeyFile(path.join(root, 'keys', 'treasury.json'), generateKeyPair('ml-dsa-87'));
 
-// Fixed supply: all 500 million CYVBER exist from genesis and blockReward is 0, so no coin is
+// Fixed supply: all 500 million CYV exist from genesis and blockReward is 0, so no coin is
 // ever minted; validators earn transaction fees. How the supply is split (team, ecosystem,
 // sale, reserve) is still to be decided; on devnet it sits in one treasury key plus the faucet.
 const genesis = {
   chainId: 'cyvber-devnet-1',
   timestamp: Date.now(),
-  coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: DECIMALS },
+  coin: { name: 'CYVBER', symbol: 'CYV', decimals: DECIMALS },
   blockTimeMs: 2000,
   maxTxsPerBlock: 500,
   minFee: parseAmount('0.0001', DECIMALS).toString(),
@@ -71,7 +71,7 @@ console.log(`devnet created in ${root}
 chain id   ${genesis.chainId}
 coin       ${genesis.coin.symbol} (${DECIMALS} decimals)
 validators ${validators.map((v) => v.address).join('\n           ')}
-supply     500,000,000 CYVBER, fixed (no minting)
+supply     500,000,000 CYV, fixed (no minting)
 treasury   ${treasury.address} (435,865,000)
 tripwire   3,135,000 in Q-Day bounties (6 bait keys)
 rewards    60,000,000 validator pool (24M, 18M, 12M, 6M a year)

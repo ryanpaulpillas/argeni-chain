@@ -5,7 +5,7 @@ API at **rpc.cyvber.com**, all on one DigitalOcean server with automatic HTTPS. 
 45 minutes, most of it waiting.
 
 What you'll have afterwards: a public **testnet** with 4 post-quantum validators on one server.
-Test CYVBER has no value. One server means one operator, so it is **not decentralized yet**;
+Test CYV has no value. One server means one operator, so it is **not decentralized yet**;
 adding validators on other servers is the next step.
 
 ---
@@ -166,7 +166,7 @@ Independent operators join by staking; nobody needs to edit genesis.
 1. The operator creates a validator key on their server and an owner key (holding the stake) on
    their own computer:
    `node src/cli.js keygen --out validator.json` and `node src/cli.js keygen --out owner.json --encrypt`.
-2. They get at least the minimum stake (100,000 test CYVBER on the testnet) into the owner account.
+2. They get at least the minimum stake (100,000 test CYV on the testnet) into the owner account.
 3. They start their node with a config like `node-1.json`, without `faucetKey`, with
    `"peers": ["https://rpc.cyvber.com"]`, their own public HTTPS address as
    `"publicUrl": "https://node.their-domain.com"` (behind Caddy, like ours), and a trusted snapshot
@@ -197,4 +197,4 @@ double-signing (5% of the stake and a permanent ban). So:
 - File the **CYVBER trademark** at IPOPHL (the name becomes public the day this goes live).
 - Get the **logo similarity check** done.
 - Fill in the **"to confirm"** items on the website (contact, repository link, figures).
-- Keep saying clearly that **test CYVBER has no value**, and don't promise it will become real CYVBER.
+- Keep saying clearly that **test CYV has no value**, and don't promise it will become real CYVBER.

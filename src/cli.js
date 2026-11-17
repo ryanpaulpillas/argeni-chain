@@ -27,7 +27,7 @@ const USAGE = `cyvber <command> [options]
   node --config <file>                        run a node
   status [--rpc <url>]                        show chain status
   balance <address> [--rpc <url>]             show an account balance
-  send --key <file> --to <address> --amount <CYVBER> [--fee <CYVBER>] [--memo <text>] [--rpc <url>]
+  send --key <file> --to <address> --amount <CYV> [--fee <CYV>] [--memo <text>] [--rpc <url>]
   faucet <address> [--rpc <url>]              request testnet CYVBER
   migrate-commit --key <old key file> --new-key <post-quantum file> --payer <funded key file> [--rpc <url>]
                                               after a key type is retired, a never-used account sends this
@@ -41,7 +41,7 @@ const USAGE = `cyvber <command> [options]
                                               (Ed25519 -> post-quantum, or rotate e.g. ML-DSA -> SLH-DSA)
 
 Vesting (locked allocations, e.g. team grants)
-  vest --key <file> --to <address> --amount <CYVBER> --lock <months> --vest <months> [--at-start <CYVBER>]
+  vest --key <file> --to <address> --amount <CYV> --lock <months> --vest <months> [--at-start <CYV>]
                                               send CYVBER that unlocks over time: nothing for --lock
                                               months, then equal monthly parts over --vest months
 
@@ -49,17 +49,17 @@ Multi-signature vaults (e.g. 2 of 3 founders must sign)
   multisig create --threshold <m> --keys <a.json,b.json,c.json> --out <vault.json>
                                               make a vault from members' key files (only their public
                                               keys are read); prints the vault's address
-  multisig propose --vault <vault.json> --to <address> --amount <CYVBER> --out <tx.json>
+  multisig propose --vault <vault.json> --to <address> --amount <CYV> --out <tx.json>
                    [--lock <months> --vest <months>]   prepare an unsigned transfer (or vesting grant)
   multisig sign --tx <tx.json> --key <member key file>  add one member's signature (offline is fine)
   multisig submit --tx <tx.json>              send it once enough members have signed
 
 Staking (validators)
   validators [--rpc <url>]                    list validators, stake and status
-  stake join --key <owner key> --validator-key <file> --amount <CYVBER>
+  stake join --key <owner key> --validator-key <file> --amount <CYV>
                                               bond CYVBER and add a validator (its key signs too)
-  stake add --key <owner key> --validator <address> --amount <CYVBER>
-  stake request --validator-key <file> --operator <address> --amount <CYVBER> --out <request.json>
+  stake add --key <owner key> --validator <address> --amount <CYV>
+  stake request --validator-key <file> --operator <address> --amount <CYV> --out <request.json>
                                               (operator) ask for delegated stake: signed by the validator
                                               key, safe to send to the stake provider
   stake delegate --key <stake provider key> --request <request.json>

@@ -1,4 +1,4 @@
-// Builds a mainnet genesis from the planned allocation of 500,000,000 CYVBER: every allocation's
+// Builds a mainnet genesis from the planned allocation of 500,000,000 CYV: every allocation's
 // lock-up is written in as an on-chain vesting grant, and the validator incentives become the
 // front-loaded reward pool the chain pays out every block.
 //
@@ -63,7 +63,7 @@ export function buildGenesis(config) {
   const genesis = {
     chainId: config.chainId ?? 'cyvber-1',
     timestamp: config.launch,
-    coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: DECIMALS },
+    coin: { name: 'CYVBER', symbol: 'CYV', decimals: DECIMALS },
     blockTimeMs: 2000,
     emptyBlockIntervalMs: 60_000,
     maxTxsPerBlock: 200,
@@ -95,7 +95,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     if (fs.existsSync(values.out)) throw new Error(`${values.out} already exists`);
     const genesis = buildGenesis(JSON.parse(fs.readFileSync(values.config, 'utf8')));
     fs.writeFileSync(values.out, `${JSON.stringify(genesis, null, 2)}\n`);
-    console.log(`wrote ${values.out}: ${genesis.chainId}, 500,000,000 CYVBER
+    console.log(`wrote ${values.out}: ${genesis.chainId}, 500,000,000 CYV
   ecosystem 150M (15M free, rest over 36 months) · treasury 100M (6-month lock, 48 months)
   validator rewards 60M paid by the chain: 24M, 18M, 12M, 6M per year
   public distribution 50M (held until legal review) · team 75M (founder vaults + team pool; 12-month lock, 24 months)
