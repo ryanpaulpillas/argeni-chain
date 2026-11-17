@@ -5,7 +5,7 @@ import path from 'node:path';
 import { Chain } from './chain.js';
 import { Consensus, memorySignLog } from './consensus.js';
 import { addressFromPublicKey, generateKeyPair, isAddress, keyTypeOf, parseMultisig, publicKeyFromPrivate, PQ_KEY_TYPES } from './crypto.js';
-import { createHello, acceptHello, completeHello, SESSION_MAX_AGE_MS } from './p2p.js';
+import { createHello, acceptHello, completeHello, StealthRefusal, SESSION_MAX_AGE_MS } from './p2p.js';
 import { createTransfer, createTx, txHash } from './tx.js';
 import { formatAmount, parseAmount } from './coin.js';
 import { RUNG_IDS, LEVEL_NAMES, alertLevel, rungInfo } from './tripwire.js';
@@ -29,12 +29,15 @@ export class Node {
   //   txsPerMinutePerIp: cap on POST /txs per client IP (0 = unlimited)
   //   firewall: options for the node firewall (firewall.js), e.g. { rates: { tx: 60 }, allow: ['203.0.113.7'] };
   //   on by default; loopback is exempt unless firewall.exemptLocal is false
+  //   stealth: hide the peer channel from everyone except known nodes (configured peers, active
+  //   validators, and stealthAllow identity keys). Strangers get "not found" before any cryptography,
+  //   so a validator can't be found by scanning or worn down by handshake floods.
   // Fast sync: snapshotEvery = keep a snapshot of the state every N blocks for new nodes to start
   // from; trustedBlock = { height, hash } makes an empty node start from that snapshot (taken from
   // a peer, checked against the hash) instead of replaying every block since genesis.
   constructor({ genesis, dataDir = null, port = 0, host = '127.0.0.1', peers = [], validatorKey = null, faucetKey = null, faucetAmount = '100',
     trustProxy = false, faucetAddressCooldownMs = 60_000, faucetIpCooldownMs = 0, txsPerMinutePerIp = 0, snapshotEvery = 1000, trustedBlock = null,
-    publicUrl = null, encryptPeers = true, firewall = {}, log = console.log }) {
+    publicUrl = null, encryptPeers = true, firewall = {}, stealth = false, stealthAllow = [], log = console.log }) {
     this.genesis = genesis;
     this.dataDir = dataDir;
     this.chain = new Chain(genesis, { dataDir });
@@ -61,6 +64,8 @@ export class Node {
     this.host = host;
     this.peers = peers.map((p) => p.replace(/\/$/, ''));
     this.configuredPeers = new Set(this.peers);
+    this.stealth = stealth;
+    this.stealthAllow = new Set(stealthAllow);
     this.trustedIdentities = new Set(); // identities of configured peers, learned at our handshakes with them
     this.firewall = new Firewall(firewall, {
       log: (m) => this.log(m),
@@ -340,12 +345,17 @@ export class Node {
 
   // POST /p2p/handshake and POST /p2p: answer a peer over the encrypted channel.
   async #p2p(parts, body, res, ip) {
-    const ctx = { chainId: this.genesis.chainId, genesisHash: this.chain.genesisHash, identityKey: this.identityKey, identityPublicKey: this.identityPublic, seenNonces: this.helloNonces };
+    const known = (key) => this.trustedIdentities.has(key) || this.chain.validators.has(key) || this.stealthAllow.has(key);
+    const ctx = { chainId: this.genesis.chainId, genesisHash: this.chain.genesisHash, identityKey: this.identityKey, identityPublicKey: this.identityPublic, seenNonces: this.helloNonces, admit: this.stealth ? known : null };
     if (parts[1] === 'handshake' && parts.length === 2) {
       let accepted;
       try {
         accepted = acceptHello(body?.hello, ctx);
       } catch (err) {
+        if (err instanceof StealthRefusal) {
+          this.firewall.penalize(ip, 'not-found');
+          return send(res, 404, { error: 'not found' }); // stealth: looks like no peer channel here
+        }
         this.firewall.penalize(ip, 'bad-handshake');
         return send(res, 400, { error: `handshake refused: ${err.message}` });
       }
@@ -361,8 +371,8 @@ export class Node {
     if (parts.length !== 1) return send(res, 404, { error: 'not found' });
     const session = this.inbound.get(body?.sid);
     if (!session) {
-      this.firewall.penalize(ip, 'unknown-session');
-      return send(res, 409, { error: 'unknown session; shake hands again' });
+      this.firewall.penalize(ip, this.stealth ? 'not-found' : 'unknown-session');
+      return this.stealth ? send(res, 404, { error: 'not found' }) : send(res, 409, { error: 'unknown session; shake hands again' });
     }
     if (this.firewall.peerBannedFor(session.peerKey)) {
       this.inbound.delete(session.sid);
@@ -482,7 +492,7 @@ export class Node {
         tipHash: chain.tipHash,
         validators: chain.validatorList.map(addressFromPublicKey),
         historyFrom: chain.base + 1,
-        p2p: { encrypted: this.encryptPeers, keyExchange: 'ML-KEM-768 (FIPS 203)', identity: addressFromPublicKey(this.identityPublic), cipher: 'AES-256-GCM', inboundSessions: this.inbound.size },
+        p2p: { encrypted: this.encryptPeers, keyExchange: 'ML-KEM-768 (FIPS 203) + X25519 hybrid', stealth: this.stealth, identity: addressFromPublicKey(this.identityPublic), cipher: 'AES-256-GCM', inboundSessions: this.inbound.size },
         snapshots: [...this.snapshots.values()].map((sn) => ({ height: sn.height, hash: sn.block.hash })),
         self: this.validatorKey ? addressFromPublicKey(publicKeyFromPrivate(this.validatorKey)) : null,
         quorum: chain.quorum,

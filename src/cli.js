@@ -226,6 +226,8 @@ async function main(argv) {
         trustedBlock: config.trustedBlock ?? null,
         publicUrl: config.publicUrl ?? null,
         firewall: config.firewall ?? {},
+        stealth: Boolean(config.stealth),
+        stealthAllow: config.stealthAllow ?? [],
       });
       // Node.js 24's built-in fetch (undici) can throw setTypeOfService EINVAL from a socket callback
       // when a peer connection closes mid-request; nothing can catch it, and it would stop the validator.

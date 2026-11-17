@@ -145,7 +145,7 @@ test('live nodes talk only through the encrypted channel: a wiretap sees no vote
 
     const status = await fetchJson(`${urls[3]}/status`);
     assert.equal(status.p2p.encrypted, true);
-    assert.equal(status.p2p.keyExchange, 'ML-KEM-768 (FIPS 203)');
+    assert.equal(status.p2p.keyExchange, 'ML-KEM-768 (FIPS 203) + X25519 hybrid');
     assert.ok(status.p2p.inboundSessions >= 1);
 
     const wire = captured.join('\n');
@@ -193,6 +193,56 @@ test('an outsider cannot fill the peer list with addresses it does not own', asy
       await other.stop();
     }
     assert.equal(node.peers.length, 0);
+  } finally {
+    await node.stop();
+  }
+});
+
+test('hybrid key exchange: the session needs both the ML-KEM and the X25519 secret', () => {
+  const { hello, reply } = pair();
+  assert.equal(Buffer.from(hello.x, 'base64').length, 44, 'X25519 public key (SPKI)');
+  assert.equal(Buffer.from(reply.x, 'base64').length, 44);
+  // Swapping in a different X25519 key breaks the signature, so neither half can be replaced in transit.
+  const otherX = crypto.generateKeyPairSync('x25519').publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+  const a = generateKeyPair('ml-dsa-65');
+  const b = generateKeyPair('ml-dsa-65');
+  const fresh = createHello({ ...CHAIN, identityKey: a.privateKey, identityPublicKey: a.publicKey });
+  assert.throws(() => acceptHello({ ...fresh.hello, x: otherX }, { ...CHAIN, identityKey: b.privateKey, identityPublicKey: b.publicKey, seenNonces: new Set() }), /signature invalid/);
+  // Old version-1 (ML-KEM only) handshakes are refused.
+  assert.throws(() => acceptHello({ ...fresh.hello, v: 1 }, { ...CHAIN, identityKey: b.privateKey, identityPublicKey: b.publicKey, seenNonces: new Set() }), /unsupported handshake version/);
+});
+
+test('stealth gate: strangers are refused before any cryptography; known nodes get in', async () => {
+  const p2p = await import('../src/p2p.js');
+  const a = generateKeyPair('ml-dsa-65');
+  const b = generateKeyPair('ml-dsa-65');
+  const known = new Set([a.publicKey]);
+  const ctx = { ...CHAIN, identityKey: b.privateKey, identityPublicKey: b.publicKey, seenNonces: new Set(), admit: (k) => known.has(k) };
+  const stranger = generateKeyPair('ml-dsa-65');
+  const strangerHello = createHello({ ...CHAIN, identityKey: stranger.privateKey, identityPublicKey: stranger.publicKey }).hello;
+  assert.throws(() => acceptHello(strangerHello, ctx), p2p.StealthRefusal);
+  assert.throws(() => acceptHello({ ...strangerHello, sig: 'garbage' }, ctx), p2p.StealthRefusal, 'refused before the signature is even checked');
+  assert.throws(() => acceptHello(null, ctx), p2p.StealthRefusal);
+  const ok = createHello({ ...CHAIN, identityKey: a.privateKey, identityPublicKey: a.publicKey });
+  const { reply } = acceptHello(ok.hello, ctx);
+  assert.equal(completeHello(ok.hello, ok.kemPrivateKey, reply).peerKey, b.publicKey);
+});
+
+test('a stealth node answers strangers with "not found" and still runs with its own validators', async () => {
+  const keys = Array.from({ length: 4 }, () => generateKeyPair('ml-dsa-65'));
+  const genesis = { chainId: 'cyvber-stealth', timestamp: Date.now(), coin: { name: 'CYVBER', symbol: 'CYVBER', decimals: 18 }, blockTimeMs: 300, maxTxsPerBlock: 10, minFee: '1000', blockReward: '0', maxSupply: (500_000_000n * ONE).toString(), validators: keys.map((k) => k.publicKey), alloc: {} };
+  const port = await freePort();
+  const node = new Node({ genesis, port, validatorKey: keys[0].privateKey, stealth: true, log: () => {} });
+  await node.start();
+  const url = `http://127.0.0.1:${port}`;
+  const shake = (k) => fetch(`${url}/p2p/handshake`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hello: createHello({ chainId: genesis.chainId, genesisHash: node.chain.genesisHash, identityKey: k.privateKey, identityPublicKey: k.publicKey }).hello }) });
+  try {
+    const stranger = await shake(generateKeyPair('ml-dsa-65'));
+    assert.equal(stranger.status, 404);
+    assert.deepEqual(await stranger.json(), { error: 'not found' });
+    assert.equal((await fetch(`${url}/p2p`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sid: 'f'.repeat(32), seq: 0, ct: '' }) })).status, 404, 'no session oracle either');
+    assert.equal((await shake(keys[1])).status, 200, 'a validator in the set is admitted');
+    assert.equal((await fetchJson(`${url}/status`)).p2p.stealth, true);
   } finally {
     await node.stop();
   }

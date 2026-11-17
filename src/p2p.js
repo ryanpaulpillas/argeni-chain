@@ -5,7 +5,10 @@
 //                  public key>, nonce, ts }, signed with the identity key
 //   responder -> { v, sid, from: <its identity key>, ct: <ML-KEM-768 ciphertext>, init: <hash of the
 //                  initiator's message> }, signed with its identity key
-// Both sides then hold the same 32-byte ML-KEM shared secret (FIPS 203). Two AES-256-GCM keys, one
+// Both sides then hold the same 32-byte ML-KEM shared secret (FIPS 203), and (version 2) an X25519
+// shared secret from fresh keys on both sides: the session keys come from BOTH, so an attacker must
+// break ML-KEM (a lattice problem) and X25519 (an elliptic curve) to read the traffic. A quantum
+// computer breaks only the second; a classical breakthrough against lattices only the first. Two AES-256-GCM keys, one
 // per direction, are derived from it with HKDF-SHA256 over the whole transcript. The ML-KEM key pair
 // is used once and thrown away, so recording traffic today and breaking one key later reveals no
 // other session (forward secrecy), and no quantum computer can recover the session from the
@@ -18,7 +21,7 @@
 import crypto from 'node:crypto';
 import { canonical, sha256, sign, verify, isPublicKey, keyTypeOf, PQ_KEY_TYPES } from './crypto.js';
 
-export const P2P_VERSION = 1;
+export const P2P_VERSION = 2; // 2 = hybrid ML-KEM-768 + X25519
 const HANDSHAKE_MAX_SKEW_MS = 60_000;
 export const SESSION_MAX_AGE_MS = 10 * 60_000; // initiators start a fresh session (fresh keys) every 10 minutes
 const SESSION_MAX_MESSAGES = 1_000_000;
@@ -28,10 +31,19 @@ const b64 = (buf) => Buffer.from(buf).toString('base64');
 const unb64 = (s) => Buffer.from(String(s), 'base64');
 
 function deriveKeys(sharedKey, init, resp) {
-  const salt = Buffer.from(sha256(`cyvber-p2p:v1|${canonical(init)}|${canonical(resp)}`), 'hex');
-  const okm = Buffer.from(crypto.hkdfSync('sha256', sharedKey, salt, Buffer.from('cyvber-p2p session keys'), 64));
+  const salt = Buffer.from(sha256(`cyvber-p2p:v2|${canonical(init)}|${canonical(resp)}`), 'hex');
+  const okm = Buffer.from(crypto.hkdfSync('sha256', sharedKey, salt, Buffer.from('cyvber-p2p hybrid session keys'), 64));
   return { i2r: crypto.createSecretKey(okm.subarray(0, 32)), r2i: crypto.createSecretKey(okm.subarray(32, 64)) }; // key objects, built once per session
 }
+
+const x25519Public = (der) => {
+  const key = crypto.createPublicKey({ key: unb64(der), format: 'der', type: 'spki' });
+  if (key.asymmetricKeyType !== 'x25519') throw new Error('handshake key must be X25519');
+  return key;
+};
+const exportPublic = (key) => b64(key.export({ type: 'spki', format: 'der' }));
+// The two secrets combined: ML-KEM first, then X25519; HKDF needs both to produce the keys.
+const hybridSecret = (kemSecret, ecdhSecret) => Buffer.concat([Buffer.from(kemSecret), Buffer.from(ecdhSecret)]);
 
 const signed = (body, privateKey) => ({ ...body, sig: sign(canonical(body), privateKey) });
 const unsigned = ({ sig, ...body }) => body;
@@ -124,17 +136,22 @@ export class Session {
 // Initiator side, step 1: a fresh ML-KEM-768 key pair and the signed hello.
 export function createHello({ chainId, genesisHash, identityKey, identityPublicKey }) {
   const kem = crypto.generateKeyPairSync('ml-kem-768');
+  const ecdh = crypto.generateKeyPairSync('x25519');
   const hello = signed({
     v: P2P_VERSION, chainId, genesisHash, from: identityPublicKey,
-    kem: b64(kem.publicKey.export({ type: 'spki', format: 'der' })),
+    kem: exportPublic(kem.publicKey), x: exportPublic(ecdh.publicKey),
     nonce: crypto.randomBytes(32).toString('hex'), ts: Date.now(),
   }, identityKey);
-  return { hello, kemPrivateKey: kem.privateKey };
+  return { hello, kemPrivateKey: { kem: kem.privateKey, x25519: ecdh.privateKey } };
 }
 
 // Responder side: checks the hello, encapsulates a shared secret to it, signs the answer.
-// `seenNonces` (a Set) rejects a replayed hello.
-export function acceptHello(hello, { chainId, genesisHash, identityKey, identityPublicKey, seenNonces }) {
+// `seenNonces` (a Set) rejects a replayed hello. `admit(identityKey)`, when given, is the stealth gate:
+// an identity it refuses gets a StealthRefusal before any signature check or key exchange, so the
+// node spends nothing on strangers and can answer as if the route did not exist.
+export class StealthRefusal extends Error {}
+export function acceptHello(hello, { chainId, genesisHash, identityKey, identityPublicKey, seenNonces, admit = null }) {
+  if (admit && !(hello && typeof hello === 'object' && typeof hello.from === 'string' && admit(hello.from))) throw new StealthRefusal('not admitted');
   if (!hello || typeof hello !== 'object' || hello.v !== P2P_VERSION) throw new Error('unsupported handshake version');
   if (hello.chainId !== chainId || hello.genesisHash !== genesisHash) throw new Error('different chain');
   if (!checkIdentity(hello.from)) throw new Error('identity must be a post-quantum public key');
@@ -148,10 +165,18 @@ export function acceptHello(hello, { chainId, genesisHash, identityKey, identity
     throw new Error('bad ML-KEM key');
   }
   if (kemKey.asymmetricKeyType !== 'ml-kem-768') throw new Error('handshake key must be ML-KEM-768');
+  let theirX;
+  try {
+    theirX = x25519Public(hello.x);
+  } catch {
+    throw new Error('bad X25519 key');
+  }
   seenNonces?.add(hello.nonce);
   const { sharedKey, ciphertext } = crypto.encapsulate(kemKey);
-  const reply = signed({ v: P2P_VERSION, sid: crypto.randomBytes(16).toString('hex'), from: identityPublicKey, ct: b64(ciphertext), init: sha256(canonical(hello)) }, identityKey);
-  const keys = deriveKeys(sharedKey, hello, reply);
+  const ours = crypto.generateKeyPairSync('x25519');
+  const ecdh = crypto.diffieHellman({ privateKey: ours.privateKey, publicKey: theirX });
+  const reply = signed({ v: P2P_VERSION, sid: crypto.randomBytes(16).toString('hex'), from: identityPublicKey, ct: b64(ciphertext), x: exportPublic(ours.publicKey), init: sha256(canonical(hello)) }, identityKey);
+  const keys = deriveKeys(hybridSecret(sharedKey, ecdh), hello, reply);
   const session = new Session({ sid: reply.sid, sendKey: keys.r2i, recvKey: keys.i2r, sendDir: 'r', peerKey: hello.from, initiator: false });
   return { reply, session };
 }
@@ -163,7 +188,14 @@ export function completeHello(hello, kemPrivateKey, reply, { expectedPeerKey = n
   if (expectedPeerKey && reply.from !== expectedPeerKey) throw new Error('peer identity changed (possible impersonation)');
   if (reply.init !== sha256(canonical(hello))) throw new Error('handshake reply is for a different hello');
   if (!verify(canonical(unsigned(reply)), reply.sig, reply.from)) throw new Error('handshake reply signature invalid');
-  const sharedKey = crypto.decapsulate(kemPrivateKey, unb64(reply.ct));
-  const keys = deriveKeys(sharedKey, hello, reply);
+  const sharedKey = crypto.decapsulate(kemPrivateKey.kem, unb64(reply.ct));
+  let theirX;
+  try {
+    theirX = x25519Public(reply.x);
+  } catch {
+    throw new Error('bad X25519 key in reply');
+  }
+  const ecdh = crypto.diffieHellman({ privateKey: kemPrivateKey.x25519, publicKey: theirX });
+  const keys = deriveKeys(hybridSecret(sharedKey, ecdh), hello, reply);
   return new Session({ sid: reply.sid, sendKey: keys.i2r, recvKey: keys.r2i, sendDir: 'i', peerKey: reply.from, initiator: true });
 }
