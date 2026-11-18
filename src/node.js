@@ -17,6 +17,9 @@ import { totalLocked, vestingEnd } from './state.js';
 const MAX_BODY_BYTES = 16_000_000;
 const EXPLORER_HTML = new URL('../public/explorer.html', import.meta.url);
 const SYNC_INTERVAL_MS = 3_000;
+const DISCOVERY_INTERVAL_MS = 60_000;
+const MAX_DISCOVERED = 32; // peers this node adds by itself (seeds + peer exchange)
+const NEW_PEERS_PER_ROUND = 8;
 const PRUNE_INTERVAL_MS = 60_000;
 const SNAPSHOTS_KEPT = 2;
 const MAX_PEERS = 64;
@@ -32,12 +35,16 @@ export class Node {
   //   stealth: hide the peer channel from everyone except known nodes (configured peers, active
   //   validators, and stealthAllow identity keys). Strangers get "not found" before any cryptography,
   //   so a validator can't be found by scanning or worn down by handshake floods.
+  // Autonomous discovery: seeds = public node addresses (e.g. https://rpc.cyvber.com) to learn the
+  //   network from; every minute the node asks its seeds and peers for the nodes they know (GET /peers),
+  //   shakes hands with new ones (which proves they run this chain) and joins them. discoverPrivate
+  //   allows loopback/LAN addresses (tests and private networks only).
   // Fast sync: snapshotEvery = keep a snapshot of the state every N blocks for new nodes to start
   // from; trustedBlock = { height, hash } makes an empty node start from that snapshot (taken from
   // a peer, checked against the hash) instead of replaying every block since genesis.
   constructor({ genesis, dataDir = null, port = 0, host = '127.0.0.1', peers = [], validatorKey = null, faucetKey = null, faucetAmount = '100',
     trustProxy = false, faucetAddressCooldownMs = 60_000, faucetIpCooldownMs = 0, txsPerMinutePerIp = 0, snapshotEvery = 1000, trustedBlock = null,
-    publicUrl = null, encryptPeers = true, firewall = {}, stealth = false, stealthAllow = [], log = console.log }) {
+    publicUrl = null, encryptPeers = true, firewall = {}, stealth = false, stealthAllow = [], seeds = [], discoverPrivate = false, log = console.log }) {
     this.genesis = genesis;
     this.dataDir = dataDir;
     this.chain = new Chain(genesis, { dataDir });
@@ -64,6 +71,10 @@ export class Node {
     this.host = host;
     this.peers = peers.map((p) => p.replace(/\/$/, ''));
     this.configuredPeers = new Set(this.peers);
+    this.seeds = seeds.map((p) => p.replace(/\/$/, ''));
+    this.discoverPrivate = discoverPrivate;
+    this.discovering = false;
+    this.lastDiscovery = null;
     this.stealth = stealth;
     this.stealthAllow = new Set(stealthAllow);
     this.trustedIdentities = new Set(); // identities of configured peers, learned at our handshakes with them
@@ -105,8 +116,10 @@ export class Node {
     if (this.trustedBlock && this.chain.height < this.trustedBlock.height) await this.#fastSync();
     this.#loadSnapshots();
     this.chain.onCommit((block) => this.#maybeSnapshot(block.header.height));
+    await this.discover();
     await this.sync();
     await this.#announce();
+    this.timers.push(setInterval(() => this.discover(), DISCOVERY_INTERVAL_MS));
     this.timers.push(setInterval(() => this.sync(), SYNC_INTERVAL_MS));
     this.timers.push(setInterval(() => this.#announce(), 60_000));
     this.timers.push(setInterval(() => this.#pruneSessions(), 60_000));
@@ -251,6 +264,77 @@ export class Node {
     const fromAnnounced = [...this.announced].some((url) => this.pinnedPeers.get(url) === fromKey);
     const targets = fromAnnounced ? this.peers.filter((url) => this.pinnedPeers.get(url) !== fromKey) : [...this.announced];
     for (const peer of targets) this.#peerCall(peer, 'POST', route, body).catch(() => this.#peerFailed(peer));
+  }
+
+  // ---- autonomous peer discovery ----
+
+  // A peer address that may be shared and dialled: plain http(s), and public unless discoverPrivate.
+  #shareablePeer(value) {
+    let url;
+    try { url = new URL(value); } catch { return null; }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) return null;
+    if (!this.discoverPrivate && isPrivateHost(url.hostname)) return null;
+    return url.origin + url.pathname.replace(/\/$/, '');
+  }
+
+  // Public addresses of the nodes this one knows (answer to GET /peers).
+  publicPeers() {
+    const list = [this.publicUrl, ...this.peers].filter(Boolean).map((p) => this.#shareablePeer(p)).filter(Boolean);
+    return [...new Set(list)].slice(0, MAX_PEERS);
+  }
+
+  // Asks the seeds and current peers which nodes they know, then joins new ones. A new node, or a new
+  // validator, needs only one seed address; everything else is found by itself. Each new address is
+  // checked with a handshake (same chain id and genesis, identity pinned) before it is used, and one
+  // identity keeps one address.
+  async discover() {
+    if (this.discovering) return this.lastDiscovery;
+    this.discovering = true;
+    let added = 0;
+    const found = new Set();
+    try {
+      const sources = [...new Set([...this.seeds, ...this.peers])].slice(0, 24);
+      // Known peers are asked over the encrypted channel (a wiretap must not learn the network map);
+      // a seed we are not yet linked to is a public address, asked over plain HTTP(S).
+      const ask = (src) => (this.encryptPeers && this.peers.includes(src) ? this.#peerCall(src, 'GET', '/peers') : fetchJson(`${src}/peers`, { timeoutMs: 5_000 }));
+      const lists = await Promise.all(sources.map((src) => ask(src).catch(() => null)));
+      for (const seed of this.seeds) found.add(seed);
+      for (const list of lists) for (const p of (Array.isArray(list?.peers) ? list.peers.slice(0, MAX_PEERS) : [])) found.add(p);
+      for (const candidate of found) {
+        if (added >= NEW_PEERS_PER_ROUND || this.announced.size >= MAX_DISCOVERED || this.peers.length >= MAX_PEERS) break;
+        const peer = this.#shareablePeer(candidate) ?? (this.seeds.includes(candidate) ? candidate : null);
+        if (!peer || peer === this.publicUrl || peer === this.url || this.peers.includes(peer)) continue;
+        if (await this.#joinDiscovered(peer)) added++;
+      }
+    } finally {
+      this.discovering = false;
+    }
+    this.lastDiscovery = { at: Date.now(), candidates: found.size, added, peers: this.peers.length };
+    return this.lastDiscovery;
+  }
+
+  async #joinDiscovered(peer) {
+    let peerKey = null;
+    try {
+      if (this.encryptPeers) {
+        peerKey = (await this.#session(peer)).peerKey; // refused unless it runs this exact chain
+        if (peerKey === this.identityPublic) throw new Error('that is this node');
+      } else {
+        const status = await fetchJson(`${peer}/status`, { timeoutMs: 5_000 });
+        if (status.chainId !== this.genesis.chainId || status.genesisHash !== this.chain.genesisHash) throw new Error('different chain');
+      }
+    } catch {
+      this.outbound.delete(peer);
+      this.pinnedPeers.delete(peer);
+      return false;
+    }
+    if (peerKey) for (const old of [...this.announced]) if (old !== peer && this.pinnedPeers.get(old) === peerKey) this.#dropPeer(old);
+    if (this.peers.includes(peer) || this.peers.length >= MAX_PEERS) return false;
+    this.peers.push(peer);
+    this.announced.add(peer);
+    this.log(`discovered peer ${peer}`);
+    if (this.publicUrl) this.#peerCall(peer, 'POST', '/peers', { url: this.publicUrl, genesisHash: this.chain.genesisHash }).catch(() => null);
+    return true;
   }
 
   // ---- encrypted peer channel (see p2p.js) ----
@@ -506,6 +590,7 @@ export class Node {
       });
     }
     if (parts[0] === 'genesis' && parts.length === 1) return send(res, 200, chain.genesis);
+    if (parts[0] === 'peers' && parts.length === 1) return send(res, 200, { peers: this.publicPeers(), seeds: this.seeds.length, discovery: this.lastDiscovery });
     if (parts[0] === 'tripwire' && parts.length === 1) {
       const canary = chain.state.canary;
       if (!canary) return send(res, 404, { error: 'this chain has no Q-Day Tripwire' });
@@ -911,6 +996,20 @@ function readJson(req, limit = MAX_BODY_BYTES) {
     });
     req.on('error', reject);
   });
+}
+
+// Loopback, private-LAN, link-local and similar addresses are never shared or dialled by discovery.
+export function isPrivateHost(hostname) {
+  const h = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true;
+  const v4 = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224;
+  }
+  if (h.includes(':')) return h === '::' || h === '::1' || /^f[cd]/.test(h) || /^fe[89ab]/.test(h) || h.startsWith('::ffff:');
+  return false;
 }
 
 export async function fetchJson(url, { timeoutMs = 15_000, ...options } = {}) {
