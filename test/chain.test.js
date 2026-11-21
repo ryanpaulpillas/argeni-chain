@@ -154,10 +154,12 @@ test('a node restarts from its data dir and refuses a different genesis', () => 
     assert.throws(() => new Chain({ ...ctx.genesis, chainId: 'other' }, { dataDir }), /different genesis/);
 
     // Removing a signature from a stored block makes the node refuse to start.
-    const file = path.join(dataDir, 'blocks', '0000000001.json');
-    const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const blocksDir = path.join(dataDir, 'blocks');
+    assert.ok(fs.existsSync(path.join(blocksDir, '0000000001.cb')), 'blocks are stored compactly');
+    const stored = restarted.getBlock(1);
     stored.commit.precommits = stored.commit.precommits.slice(0, 2);
-    fs.writeFileSync(file, JSON.stringify(stored));
+    fs.unlinkSync(path.join(blocksDir, '0000000001.cb'));
+    fs.writeFileSync(path.join(blocksDir, '0000000001.json'), JSON.stringify(stored)); // older plain format is still read
     assert.throws(() => new Chain(ctx.genesis, { dataDir }), /stored block .* is invalid/);
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true });

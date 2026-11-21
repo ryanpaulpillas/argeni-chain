@@ -8,6 +8,7 @@ import { checkTx, txHash } from './tx.js';
 import { State, migrationError, stakingParams, MAX_GRANTS } from './state.js';
 export { State };
 import { isUnits } from './coin.js';
+import { BlockStore } from './blockstore.js';
 import { bountyPool, tripwireGenesisErrors, tripwireParams } from './tripwire.js';
 
 const MAX_MEMPOOL = 10_000;
@@ -129,6 +130,10 @@ export function validPrecommits(genesis, block, validatorSet, commit = block.com
 // signatures are tens of kilobytes).
 const DEFAULT_MAX_BLOCK_BYTES = 8_000_000;
 const txBytes = (tx) => Buffer.byteLength(JSON.stringify(tx));
+// A node with a data directory keeps only the newest blocks in memory and reads older ones from disk
+// (each block is ~100 KB of post-quantum signatures; keeping them all used ~265 MB a day per node).
+export const RECENT_BLOCKS = 256;
+const CACHE_BLOCKS = 64;
 
 export class Chain {
   constructor(genesis, { dataDir = null, now = () => Date.now(), snapshot = null } = {}) {
@@ -141,7 +146,10 @@ export class Chain {
     this.now = now;
     this.base = 0; // height of the snapshot this node started from (0 = from genesis)
     this.baseBlock = null;
-    this.blocks = [];
+    this.recent = []; // newest blocks (all of them when there is no data directory)
+    this.count = 0; // blocks after base
+    this.cache = new Map(); // height -> older block read from disk (small LRU)
+    this.store = dataDir ? new BlockStore(path.join(dataDir, 'blocks')) : null;
     this.state = State.fromGenesis(genesis);
     this.tipSigners = null; // the validator set that signed the tip block
     this.txIndex = new Map(); // tx hash -> block height
@@ -159,11 +167,18 @@ export class Chain {
   }
 
   get height() {
-    return this.base + this.blocks.length;
+    return this.base + this.count;
   }
 
   get tip() {
-    return this.blocks.at(-1) ?? this.baseBlock;
+    return this.recent.at(-1) ?? this.baseBlock;
+  }
+
+  // Every block after base, oldest first (reads older blocks from disk; for tools and tests).
+  get blocks() {
+    const out = [];
+    for (let h = this.base + 1; h <= this.height; h++) out.push(this.getBlock(h));
+    return out;
   }
 
   get tipHash() {
@@ -196,7 +211,21 @@ export class Chain {
 
   getBlock(height) {
     if (height === this.base && this.baseBlock) return this.baseBlock;
-    return height > this.base && height <= this.height ? this.blocks[height - this.base - 1] : null;
+    if (!(height > this.base && height <= this.height)) return null;
+    const first = this.height - this.recent.length + 1;
+    if (height >= first) return this.recent[height - first];
+    if (this.cache.has(height)) {
+      const b = this.cache.get(height);
+      this.cache.delete(height);
+      this.cache.set(height, b);
+      return b;
+    }
+    const block = this.store?.read(height) ?? null;
+    if (block) {
+      this.cache.set(height, block);
+      if (this.cache.size > CACHE_BLOCKS) this.cache.delete(this.cache.keys().next().value);
+    }
+    return block;
   }
 
   // Confirmed transaction by hash, with the block it is in.
@@ -416,7 +445,9 @@ export class Chain {
   // Appends a block whose certificate and state were already checked by the caller.
   commitBlock(block, state, { persist = true } = {}) {
     this.tipSigners = this.validatorList;
-    this.blocks.push(block);
+    this.recent.push(block);
+    this.count++;
+    if (this.store && this.recent.length > RECENT_BLOCKS) this.recent.shift();
     this.state = state;
     for (const tx of block.txs) {
       const hash = txHash(tx);
@@ -432,10 +463,7 @@ export class Chain {
     for (const [hash, tx] of this.mempool) {
       if (tx.nonce < this.state.get(addressFromPublicKey(tx.from)).nonce) this.mempool.delete(hash);
     }
-    if (persist && this.dataDir) {
-      const file = path.join(this.dataDir, 'blocks', `${String(block.header.height).padStart(10, '0')}.json`);
-      fs.writeFileSync(file, JSON.stringify(block));
-    }
+    if (persist && this.store) this.store.write(block);
     for (const listener of this.listeners) listener(block);
   }
 
@@ -481,9 +509,10 @@ export class Chain {
     } else {
       fs.writeFileSync(markerFile, this.genesisHash);
     }
-    for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.json')).sort()) {
-      const block = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
-      if (block.header?.height <= this.base) continue;
+    for (const height of this.store.heights()) {
+      if (height <= this.base) continue;
+      const file = String(height);
+      const block = this.store.read(height);
       const certError = this.verifyCommit(block);
       const result = certError ? { error: certError } : this.validateBlock(block, { checkTime: false });
       if (result.error) throw new Error(`stored block ${file} is invalid: ${result.error}`);
